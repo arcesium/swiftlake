@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="PartitionedData">
+
+    <select id="getDistinctPartitions" parameterType="map" resultType="map">
+        SELECT DISTINCT <foreach collection="columns" item="element" index="index"  open = "" separator=", " >
+            a.${element}
+        </foreach>
+        <if test="!columns.isEmpty() and !singleBucketColumns.isEmpty()">,</if>
+        <foreach collection="singleBucketColumns" item="element" index="index"  open = "" separator=", " >
+            CASE WHEN a.${element} IS NOT NULL THEN True ELSE NULL::BOOLEAN END AS ${element}
+        </foreach>
+        <if test=" currentFlagColumn != null ">
+            , b.${currentFlagColumn}
+        </if>
+        <if test=" effectiveEndColumn != null ">
+            , c.${effectiveEndColumn}
+        </if>
+        FROM (${table}) a
+        <if test=" currentFlagColumn != null ">
+            JOIN (SELECT True AS ${currentFlagColumn} UNION SELECT False) b ON (1=1)
+        </if>
+        <if test=" effectiveEndColumn != null ">
+            JOIN (SELECT True AS ${effectiveEndColumn} UNION SELECT NULL::BOOLEAN) c ON (1=1)
+        </if>
+    </select>
+
+    <select id="getDistinctPartitionsTransformed" parameterType="map" resultType="map">
+        SELECT
+        DISTINCT <foreach collection="partitionColumns" item="element" index="index"  open = "" separator=", " >
+        ${element}_transformed AS __${element}__
+    </foreach>
+        FROM ${partitionsDataTable} a
+    </select>
+
+    <select id="getDistinctPartitionValuesFromTable" parameterType="map" resultType="map">
+        SELECT
+        DISTINCT <foreach collection="partitionColumns" item="element" index="index"  open = "" separator=", " >
+                    __${element}__
+                </foreach>
+        FROM ${table}
+    </select>
+
+    <update id="write" parameterType="map">
+        COPY(
+            SELECT <foreach collection="projectedColumns" item="element" index="index"  open = "" separator=", " >
+                    t.${element}
+                </foreach>,
+                <foreach collection="partitionColumns" item="element" index="index"  open = "" separator=", " >
+                    p.${element}_transformed AS __${element}__
+                </foreach>
+            FROM (${dataSql}) t
+            JOIN ${partitionsDataTable} p ON (
+            <foreach collection="partitionColumns" item="element" index="index"  open = "" separator=" AND " >
+                <choose>
+                    <when test="singleBucketColumns.contains(element)">
+                        CASE WHEN t.${element} IS NOT NULL
+                                THEN True
+                                ELSE NULL::BOOLEAN END
+                                IS NOT DISTINCT FROM p.${element}
+                    </when>
+                    <otherwise>
+                        t.${element} IS NOT DISTINCT FROM p.${element}
+                    </otherwise>
+                </choose>
+            </foreach>
+            )
+            ) TO '${outputPath}' (FORMAT 'PARQUET', CODEC '${compression}', FILENAME_PATTERN "data_{uuid}", PARTITION_BY (
+            <foreach collection="partitionColumns" item="element" index="index"  open = "" separator=", " >
+                __${element}__
+            </foreach>))
+    </update>
+
+</mapper>

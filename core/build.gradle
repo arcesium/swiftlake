@@ -1,0 +1,54 @@
+dependencies {
+    api libs.duckdb.jdbc
+    api libs.bundles.iceberg
+    api libs.hadoop.client
+    api libs.parquet.hadoop
+    api libs.parquet.avro
+    api libs.commons.lang3
+    api libs.caffeine
+    api libs.mybatis
+    api libs.jsqlparser
+
+    testImplementation libs.bundles.logging
+    testImplementation libs.bundles.testing
+}
+
+jar {
+    enabled = true
+}
+
+tasks.withType(GenerateModuleMetadata) {
+    enabled = false
+}
+
+test {
+    filter {
+        excludeTestsMatching "*IntegrationTest"
+    }
+    def sysProperties = [
+            "-Duser.timezone=UTC", "-Dfile.encoding=UTF-8"
+    ]
+    jvmArgs sysProperties
+    useJUnitPlatform()
+}
+
+def integrationTestTask = project.task('integrationTest', type: Test) {
+    group = 'verification'
+    description = 'Runs integration tests'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+
+    filter {
+        includeTestsMatching "*IntegrationTest"
+    }
+
+    def sysProperties = [
+            "-Duser.timezone=UTC", "-Dfile.encoding=UTF-8"
+    ]
+    jvmArgs sysProperties
+    useJUnitPlatform()
+
+    mustRunAfter test
+}
+
+project.check.dependsOn integrationTestTask

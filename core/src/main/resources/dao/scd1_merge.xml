@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="SCD1Merge">
+    <update id="mergeFindDiffs" parameterType="com.arcesium.swiftlake.commands.SCD1MergeProperties">
+        COPY(
+            WITH diffs AS (
+            SELECT
+                CASE
+                <if test=" operationTypeColumn != null ">
+                    WHEN me.__candidate__ AND other.__candidate__ AND ${operationTypeColumn} = '${deleteOperationValue}' THEN 'D'
+                </if>
+                    WHEN me.__candidate__ AND other.__candidate__ THEN 'U'
+                    ELSE 'N'
+                END AS __operation_type__,
+                me.*,
+                other.file_row_number AS __other_file_row_number__
+            FROM
+            (
+                SELECT *, CASE WHEN ${boundaryCondition} THEN True ELSE False END AS __candidate__
+                FROM ${destinationTableName} me
+            ) me
+            LEFT OUTER JOIN (
+                SELECT *, True AS __candidate__ FROM ${sourceTableName}
+            ) other ON (me.__candidate__=other.__candidate__ AND <include refid="Common.keyColumnJoin"/>)
+            )
+            SELECT * FROM diffs
+        ) TO ${diffsFilePath} (FORMAT 'PARQUET', CODEC '${compression}', FILENAME_PATTERN "data_{uuid}", PARTITION_BY (__operation_type__))
+    </update>
+
+    <update id="saveDistinctFileNames" parameterType="Map">
+        COPY (
+            SELECT DISTINCT filename
+            FROM ${diffsFilePath}
+            WHERE __operation_type__ != 'N'
+        ) TO '${modifiedFileNamesFilePath}' (FORMAT 'PARQUET', CODEC '${compression}')
+    </update>
+
+    <select id="getFileNames" parameterType="String" resultType="String">
+        SELECT filename FROM '${value}'
+    </select>
+
+    <update id="mergeUpserts" parameterType="com.arcesium.swiftlake.commands.SCD1MergeProperties">
+        WITH updates AS (
+            SELECT
+            <foreach collection="allColumns" item="element" index="index"  open = "" separator="," >
+                ${element}
+            </foreach>
+            FROM ${sourceTableName}
+        <if test=" operationTypeColumn != null ">
+            WHERE ${operationTypeColumn} != '${deleteOperationValue}'
+        </if>
+            <if test="!appendOnly and diffsFilePath != null">
+                UNION ALL BY NAME
+                SELECT
+                <foreach collection="allColumns" item="element" index="index"  open = "" separator="," >
+                    ${element}
+                </foreach>
+                FROM ${diffsFilePath}
+                WHERE __operation_type__ = 'N' AND filename IN (SELECT filename FROM '${modifiedFileNamesFilePath}')
+            </if>
+        )
+        SELECT * FROM updates
+    </update>
+
+</mapper>

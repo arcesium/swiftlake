@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="TestMapper">
+
+    <select id="getTestData" resultType="java.util.HashMap">
+        SELECT 1 AS id, 'Test 1' AS name
+        UNION ALL SELECT 2 AS id, 'Test 2' AS name
+        UNION ALL SELECT 3 AS id, 'Test 3' AS name
+        LIMIT #{limit}
+    </select>
+
+    <select id="getTestData2" resultType="java.util.HashMap">
+        SELECT 1 AS id, 'Test 1' AS name
+        UNION ALL SELECT 2 AS id, 'Test 2' AS name
+        UNION ALL SELECT 3 AS id, 'Test 3' AS name
+        LIMIT ${limit}
+    </select>
+
+    <select id="getTestData3" resultType="java.util.HashMap">
+        SELECT 1 AS id, 'Test 1' AS name
+        UNION ALL SELECT 2 AS id, 'Test 2' AS name
+        UNION ALL SELECT 3 AS id, 'Test 3' AS name
+    </select>
+
+    <select id="getChangeData" resultType="java.util.HashMap">
+        SELECT ${id1} AS id, '${name1}' AS name, ${value1} AS value, 'U' AS operation_type
+        UNION ALL
+        SELECT ${id2} AS id, '${name2}' AS name, ${value2} AS value, 'I' AS operation_type
+    </select>
+
+    <select id="getSCD2ChangeData" resultType="java.util.HashMap">
+        SELECT ${id1} AS id, '${name1}' AS name, ${value1} AS value, '${opType1}' AS operation_type
+        UNION ALL
+        SELECT ${id2} AS id, '${name2}' AS name, ${value2} AS value, '${opType2}' AS operation_type
+    </select>
+
+    <select id="getSCD2SnapshotData" resultType="java.util.HashMap">
+        SELECT ${id1} AS id, '${name1}' AS name, ${value1} AS value
+        UNION ALL
+        SELECT ${id2} AS id, '${name2}' AS name, ${value2} AS value
+        UNION ALL
+        SELECT ${id3} AS id, '${name3}' AS name, ${value3} AS value
+    </select>
+
+    <resultMap id="TestRecordResultMap" type="com.arcesium.swiftlake.TestRecord">
+        <result property="id" column="id"/>
+        <result property="name" column="name"/>
+        <result property="category" column="category"/>
+        <result property="date" column="date"/>
+        <result property="intValue" column="int_col"/>
+        <result property="longValue" column="long_col"/>
+        <result property="floatValue" column="float_col"/>
+        <result property="doubleValue" column="double_col"/>
+        <result property="decimalValue" column="decimal_col"/>
+        <result property="booleanValue" column="bool_col"/>
+        <result property="timestampValue" column="timestamp_col"/>
+        <result property="offsetDateTimeValue" column="timestamptz_col"/>
+        <result property="localTimeValue" column="time_col"/>
+        <result property="structValue.intValue" column="nested_int"/>
+        <result property="structValue.stringValue" column="nested_string"/>
+    </resultMap>
+
+    <select id="getDataById" parameterType="map" resultMap="TestRecordResultMap">
+        SELECT id,name,category,date,int_col,long_col,float_col,double_col,decimal_col,bool_col,timestamp_col,timestamptz_col,time_col,struct_col.nested_int AS nested_int,struct_col.nested_string AS nested_string
+        FROM ${tableName} WHERE id = ${id}
+    </select>
+
+    <select id="getDataByRecord" parameterType="map" resultMap="TestRecordResultMap">
+        SELECT id,name,category,date,int_col,long_col,float_col,double_col,decimal_col,bool_col,timestamp_col,timestamptz_col,time_col,struct_col.nested_int AS nested_int,struct_col.nested_string AS nested_string
+        FROM ${tableName}
+        WHERE id=#{record.id} AND name=#{record.name} AND category=#{record.category} AND date=#{record.date} AND int_col=#{record.intValue} AND long_col=#{record.longValue} AND float_col=#{record.floatValue} AND double_col=#{record.doubleValue}
+          AND decimal_col=#{record.decimalValue} AND bool_col=#{record.booleanValue} AND timestamp_col=#{record.timestampValue} AND timestamptz_col=#{record.offsetDateTimeValue} AND time_col=#{record.localTimeValue}
+          AND struct_col.nested_int=#{record.structValue.intValue} AND struct_col.nested_string=#{record.structValue.stringValue}
+    </select>
+
+</mapper>

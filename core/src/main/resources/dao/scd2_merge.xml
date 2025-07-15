@@ -1,0 +1,225 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="SCD2Merge">
+    <select id="verifyNoOutOfOrderRecords" resultType="Boolean" parameterType="com.arcesium.swiftlake.commands.SCD2MergeProperties">
+        SELECT EXISTS (
+            SELECT 1
+            FROM ${destinationTableName}
+            WHERE ${boundaryCondition} AND (${effectiveStartColumn} >= ${effectiveTimestamp} OR ${effectiveEndColumn} >= ${effectiveTimestamp})
+            LIMIT 1
+        )
+    </select>
+    <update id="snapshotBasedSCD2MergeFindDiffs" parameterType="com.arcesium.swiftlake.commands.SCD2MergeProperties">
+        COPY(
+            WITH diffs AS (
+                SELECT
+                CASE
+                    <!-- Order of the below conditions is very important -->
+                    <!-- if old record does not exist then insert -->
+                    WHEN me.__candidate__ IS NULL THEN 'I'
+                    <!-- if matching record found and values are different then update -->
+                    WHEN me.__candidate__ AND other.__candidate__ AND (<include refid="Common.changeTrackingColumnsDiff"/>) THEN 'U'
+                    <!-- if old record exists but no matching new record then delete -->
+                    WHEN me.__candidate__ AND other.__candidate__ IS NULL THEN 'D'
+                    <!-- No change -->
+                    ELSE 'N'
+                END AS __operation_type__,
+                me.*,
+                <foreach collection="allColumns" item="element" index="index"  open = "" separator="," >
+                    other.${element} AS __other_${element}
+                </foreach>,
+                other.file_row_number AS __other_file_row_number__,
+                FROM
+                (
+                    SELECT *, CASE WHEN ${boundaryCondition} AND ${effectiveStartColumn} &lt; ${effectiveTimestamp} AND ${effectiveEndColumn} IS NULL
+                            THEN True ELSE False END AS __candidate__
+                    FROM ${destinationTableName} me
+                ) me
+                FULL OUTER JOIN (
+                    SELECT *, True AS __candidate__ FROM ${sourceTableName}
+                ) other ON (me.__candidate__=other.__candidate__ AND <include refid="Common.keyColumnJoin"/> )
+            ),
+            diffs_modified AS (
+                SELECT * REPLACE(
+                    <foreach collection="allColumns" item="element" index="index"  open = "" separator="," >
+                        CASE WHEN __operation_type__='N' THEN NULL ELSE __other_${element} END AS __other_${element}
+                    </foreach>,
+                    CASE WHEN __operation_type__='N' THEN NULL ELSE __other_file_row_number__ END AS __other_file_row_number__
+                )
+                FROM diffs
+            )
+            SELECT * FROM diffs_modified
+        ) TO ${diffsFilePath} (FORMAT 'PARQUET', CODEC '${compression}', FILENAME_PATTERN "data_{uuid}", PARTITION_BY (__operation_type__))
+    </update>
+
+    <update id="saveDistinctFileNamesForSnapshotMerge" parameterType="Map">
+        COPY (
+            SELECT DISTINCT filename
+            FROM ${diffsFilePath}
+            WHERE filename IS NOT NULL AND __operation_type__ NOT IN ('N')
+        ) TO '${modifiedFileNamesFilePath}' (FORMAT 'PARQUET', CODEC '${compression}')
+    </update>
+
+    <select id="getFileNames" parameterType="String" resultType="String">
+        SELECT filename FROM '${value}'
+    </select>
+
+    <update id="snapshotBasedSCD2MergeAppendOnly" parameterType="com.arcesium.swiftlake.commands.SCD2MergeProperties">
+        SELECT
+        <foreach collection="allColumns" item="element" index="index" open="" separator=",">
+            ${element}
+        </foreach>,
+        ${effectiveTimestamp} AS ${effectiveStartColumn}
+        ,${defaultEffectiveEndTimestamp} AS ${effectiveEndColumn}
+        <if test=" currentFlagColumn != null ">
+            , True AS ${currentFlagColumn}
+        </if>
+        FROM ${sourceTableName}
+    </update>
+
+    <update id="snapshotBasedSCD2MergeUpserts" parameterType="com.arcesium.swiftlake.commands.SCD2MergeProperties">
+        WITH
+        inserts AS (
+            SELECT
+            <foreach collection="allColumns" item="element" index="index"  open = "" separator="," >
+                me.${element}
+            </foreach>,
+            me.${effectiveStartColumn}
+            ,${defaultEffectiveEndTimestamp} AS ${effectiveEndColumn}
+            <if test=" currentFlagColumn != null ">
+                , True AS ${currentFlagColumn}
+            </if>
+            FROM (
+                SELECT
+                    <foreach collection="allColumns" item="element" index="index"  open = "" separator="," >
+                        __other_${element} AS ${element}
+                    </foreach>,
+                    ${effectiveTimestamp} AS ${effectiveStartColumn}
+                FROM ${diffsFilePath}
+                WHERE __operation_type__ IN ('I','U')
+             ) me
+        ),
+        upserts AS (
+            SELECT
+            <foreach collection="allColumns" item="element" index="index"  open = "" separator="," >
+                ${element}
+            </foreach>,
+            ${effectiveStartColumn},
+            CASE WHEN __operation_type__ IN ('U','D') THEN ${effectiveTimestamp} ELSE ${effectiveEndColumn} END AS ${effectiveEndColumn}
+            <if test=" currentFlagColumn != null ">
+                ,CASE WHEN __operation_type__ IN ('U','D') THEN False ELSE ${currentFlagColumn} END AS ${currentFlagColumn}
+            </if>
+            FROM ${diffsFilePath}
+            WHERE __operation_type__ IN ('U','D','N')
+                <!-- Filter out files where none of the records in the file changed -->
+                AND (filename IS NULL OR filename IN (
+                            SELECT filename
+                            FROM '${modifiedFileNamesFilePath}'
+                        )
+                    )
+
+            UNION ALL BY NAME
+
+            SELECT
+            <foreach collection="allColumns" item="element" index="index"  open = "" separator="," >
+                ${element}
+            </foreach>
+            ,${effectiveStartColumn}
+            ,${effectiveEndColumn}
+            <if test=" currentFlagColumn != null ">
+                ,${currentFlagColumn}
+            </if>
+            FROM inserts
+        )
+        SELECT * FROM upserts
+    </update>
+
+    <update id="changesBasedSCD2MergeFindDiffs" parameterType="com.arcesium.swiftlake.commands.SCD2MergeProperties">
+        COPY(
+            WITH diffs AS (
+            SELECT
+                CASE
+                <!-- Order of the below conditions is very important -->
+                    <!-- Soft delete the matching record for delete operation value -->
+                    WHEN me.__candidate__ AND other.__candidate__ AND ${operationTypeColumn} = '${deleteOperationValue}' THEN 'D'
+                    WHEN me.__candidate__ AND other.__candidate__ THEN
+                    <!-- if matching record found and values are different, then update -->
+                        CASE WHEN (<include refid="Common.changeTrackingColumnsDiff"/>) THEN 'U' ELSE 'N-S' END
+                    ELSE 'N'
+                END AS __operation_type__,
+            me.*,
+            other.file_row_number AS __other_file_row_number__
+            FROM
+            (
+                SELECT *, CASE WHEN ${boundaryCondition} AND ${effectiveStartColumn} &lt; ${effectiveTimestamp} AND ${effectiveEndColumn} IS NULL
+                        THEN True ELSE False END AS __candidate__
+                FROM ${destinationTableName} me
+                ) me
+                LEFT OUTER JOIN (
+                    SELECT *, True AS __candidate__ FROM ${sourceTableName}
+                ) other ON (me.__candidate__=other.__candidate__ AND <include refid="Common.keyColumnJoin"/>)
+            )
+            SELECT * FROM diffs
+        ) TO ${diffsFilePath} (FORMAT 'PARQUET', CODEC '${compression}', FILENAME_PATTERN "data_{uuid}", PARTITION_BY (__operation_type__))
+    </update>
+
+    <update id="saveDistinctFileNamesForChangesMerge" parameterType="Map">
+        COPY (
+            SELECT DISTINCT filename
+            FROM ${diffsFilePath}
+            WHERE filename IS NOT NULL AND __operation_type__ NOT IN ('N', 'N-S')
+        ) TO '${modifiedFileNamesFilePath}' (FORMAT 'PARQUET', CODEC '${compression}')
+    </update>
+
+    <update id="changesBasedSCD2MergeUpserts" parameterType="com.arcesium.swiftlake.commands.SCD2MergeProperties">
+        WITH
+        source_upserts AS (
+            SELECT *
+            FROM (
+                SELECT src.*
+                FROM (SELECT * FROM ${sourceTableName} WHERE ${operationTypeColumn} != '${deleteOperationValue}') src
+                <if test="!appendOnly and diffsFilePath != null">
+                    LEFT OUTER JOIN (SELECT * FROM ${diffsFilePath} WHERE __operation_type__='N-S') nuDiffs
+                        ON (<include refid="Common.keyColumnJoinWithAlias"><property name="leftAlias" value="src"/><property name="rightAlias" value="nuDiffs"/></include>)
+                    WHERE nuDiffs.__operation_type__ IS NULL
+                </if>
+            ) me
+        ),
+        updates AS (
+            SELECT
+            <foreach collection="allColumns" item="element" index="index"  open = "" separator="," >
+                me.${element}
+            </foreach>,
+            ${effectiveTimestamp} AS ${effectiveStartColumn}
+            ,${defaultEffectiveEndTimestamp} AS ${effectiveEndColumn}
+            <if test=" currentFlagColumn != null ">
+                , True AS ${currentFlagColumn}
+            </if>
+            FROM source_upserts me
+
+            <if test="!appendOnly and diffsFilePath != null">
+                UNION ALL BY NAME
+
+                SELECT
+                <foreach collection="allColumns" item="element" index="index"  open = "" separator="," >
+                    ${element}
+                </foreach>,
+                ${effectiveStartColumn},
+                CASE
+                    WHEN __operation_type__ IN ('U','D') THEN ${effectiveTimestamp}
+                    ELSE ${effectiveEndColumn}
+                END AS ${effectiveEndColumn}
+                <if test=" currentFlagColumn != null ">
+                    ,CASE
+                        WHEN __operation_type__ IN ('U','D') THEN False
+                        ELSE ${currentFlagColumn}
+                    END AS ${currentFlagColumn}
+                </if>
+                FROM ${diffsFilePath}
+                WHERE (__operation_type__ IN ('U','D') OR __operation_type__ IN('N','N-S'))
+                AND (filename IS NULL OR filename IN (SELECT filename FROM '${modifiedFileNamesFilePath}'))
+            </if>
+        )
+        SELECT * FROM updates
+    </update>
+</mapper>

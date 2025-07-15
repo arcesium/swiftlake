@@ -1,0 +1,11 @@
+.idea
+.gradle
+*/*.project
+**/*.settings
+*/gradle.properties
+build/
+.idea
+bin/
+out/
+**/.metadata
+**/.recommenders

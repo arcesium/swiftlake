@@ -1,0 +1,56 @@
+[versions]
+iceberg = "1.7.2"
+duckdb = "1.1.3"
+hadoop = "3.4.1"
+parquet = "1.15.2"
+mybatis = "3.5.19"
+jsqlParser = "4.9"
+caffeine = "3.2.0"
+commonsLang3 = "3.17.0"
+awsSdkV2 = "2.29.52"
+awsSdkCRT = "0.33.3"
+slf4j = "2.0.16"
+logback = "1.5.16"
+mockito = "5.15.2"
+junit = "5.11.4"
+errorprone = "2.37.0"
+assertj = "3.27.3"
+
+[libraries]
+duckdb-jdbc = { module = "org.duckdb:duckdb_jdbc", version.ref = "duckdb" }
+iceberg-api = { module = "org.apache.iceberg:iceberg-api", version.ref = "iceberg" }
+iceberg-core = { module = "org.apache.iceberg:iceberg-core", version.ref = "iceberg" }
+iceberg-common = { module = "org.apache.iceberg:iceberg-common", version.ref = "iceberg" }
+iceberg-parquet = { module = "org.apache.iceberg:iceberg-parquet", version.ref = "iceberg" }
+iceberg-aws = { module = "org.apache.iceberg:iceberg-aws", version.ref = "iceberg" }
+hadoop-client = { module = "org.apache.hadoop:hadoop-client", version.ref = "hadoop" }
+parquet-hadoop = { module = "org.apache.parquet:parquet-hadoop", version.ref = "parquet" }
+parquet-avro = { module = "org.apache.parquet:parquet-avro", version.ref = "parquet" }
+commons-lang3 = { module = "org.apache.commons:commons-lang3", version.ref = "commonsLang3" }
+caffeine = { module = "com.github.ben-manes.caffeine:caffeine", version.ref = "caffeine" }
+mybatis = { module = "org.mybatis:mybatis", version.ref = "mybatis" }
+jsqlparser = { module = "com.github.jsqlparser:jsqlparser", version.ref = "jsqlParser" }
+aws-sdk-s3 = { module = "software.amazon.awssdk:s3", version.ref = "awsSdkV2" }
+aws-sdk-glue = { module = "software.amazon.awssdk:glue", version.ref = "awsSdkV2" }
+aws-sdk-kms = { module = "software.amazon.awssdk:kms", version.ref = "awsSdkV2" }
+aws-sdk-sts = { module = "software.amazon.awssdk:sts", version.ref = "awsSdkV2" }
+aws-sdk-dynamodb = { module = "software.amazon.awssdk:dynamodb", version.ref = "awsSdkV2" }
+aws-sdk-s3-transfer-manager = { module = "software.amazon.awssdk:s3-transfer-manager", version.ref = "awsSdkV2" }
+aws-crt = { module = "software.amazon.awssdk.crt:aws-crt", version.ref = "awsSdkCRT" }
+slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
+slf4j-log4j = { module = "org.slf4j:log4j-over-slf4j", version.ref = "slf4j" }
+logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
+logback-core = { module = "ch.qos.logback:logback-core", version.ref = "logback" }
+mockito-junit-jupiter = { module = "org.mockito:mockito-junit-jupiter", version.ref = "mockito" }
+junit-jupiter-api = { module = "org.junit.jupiter:junit-jupiter-api", version.ref = "junit" }
+junit-jupiter-params = { module = "org.junit.jupiter:junit-jupiter-params", version.ref = "junit" }
+junit-jupiter-engine = { module = "org.junit.jupiter:junit-jupiter-engine", version.ref = "junit" }
+errorprone-core = { module = "com.google.errorprone:error_prone_core", version.ref = "errorprone" }
+errorprone-annotations = { module = "com.google.errorprone:error_prone_annotations", version.ref = "errorprone" }
+assertj-core = { module = "org.assertj:assertj-core", version.ref = "assertj" }
+
+[bundles]
+iceberg = ["iceberg-api", "iceberg-core", "iceberg-common", "iceberg-parquet"]
+aws-sdk = ["aws-sdk-s3", "aws-sdk-glue", "aws-sdk-kms", "aws-sdk-sts", "aws-sdk-dynamodb", "aws-sdk-s3-transfer-manager"]
+logging = ["slf4j-api", "slf4j-log4j", "logback-classic", "logback-core"]
+testing = ["junit-jupiter-api", "junit-jupiter-params", "junit-jupiter-engine", "mockito-junit-jupiter", "assertj-core"]

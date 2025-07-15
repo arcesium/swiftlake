@@ -1,0 +1,25 @@
+dependencies {
+    api project(':swiftlake-core')
+    api libs.iceberg.aws
+    api libs.bundles.aws.sdk
+    api libs.aws.crt
+
+    testImplementation libs.bundles.logging
+    testImplementation libs.bundles.testing
+}
+
+jar {
+    enabled = true
+}
+
+tasks.withType(GenerateModuleMetadata) {
+    enabled = false
+}
+
+test {
+    def sysProperties = [
+            "-Duser.timezone=UTC", "-Dfile.encoding=UTF-8"
+    ]
+    jvmArgs sysProperties
+    useJUnitPlatform()
+}

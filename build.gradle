@@ -1,0 +1,71 @@
+buildscript {
+    repositories {
+        gradlePluginPortal()
+    }
+    dependencies {
+        classpath 'net.ltgt.gradle:gradle-errorprone-plugin:4.1.0'
+        classpath 'com.diffplug.spotless:spotless-plugin-gradle:7.0.3'
+    }
+}
+
+plugins {
+    id 'java-library'
+    id 'maven-publish'
+}
+
+allprojects {
+    group = 'com.arcesium.swiftlake'
+    version = '0.1.0'
+    repositories {
+        mavenCentral()
+    }
+}
+
+subprojects {
+    apply plugin: 'java-library'
+    apply plugin: 'maven-publish'
+    apply plugin: 'net.ltgt.errorprone'
+    apply plugin: 'com.diffplug.spotless'
+
+    java {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    dependencies {
+        errorprone libs.errorprone.core
+        compileOnly libs.errorprone.annotations
+    }
+
+    tasks.withType(JavaCompile) {
+        options.encoding = "UTF-8"
+        options.errorprone {
+            disableWarningsInGeneratedCode = true
+            errorproneArgs.addAll(
+                    "-XepExcludedPaths:.*/(test|integration|generated-src|generated)/.*"
+            )
+        }
+    }
+
+    pluginManager.withPlugin('com.diffplug.spotless') {
+        spotless {
+            java {
+                target 'src/main/java/**/*.java', 'src/test/java/**/*.java'
+                googleJavaFormat("1.22.0")
+                removeUnusedImports()
+            }
+        }
+    }
+
+    tasks.withType(Test) {
+        useJUnitPlatform()
+    }
+
+    publishing {
+        publications {
+            maven(MavenPublication) {
+                from components.java
+            }
+        }
+    }
+}

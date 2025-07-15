@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE configuration
+        PUBLIC "-//mybatis.org//DTD Config 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-config.dtd">
+<configuration>
+    <mappers>
+        <mapper resource="dao/common.xml"/>
+        <mapper resource="dao/partitioned_data.xml"/>
+        <mapper resource="dao/scd1_merge.xml"/>
+        <mapper resource="dao/scd2_merge.xml"/>
+        <mapper resource="dao/delete.xml"/>
+        <mapper resource="dao/update.xml"/>
+    </mappers>
+</configuration>

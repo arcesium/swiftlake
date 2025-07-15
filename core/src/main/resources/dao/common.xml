@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="Common">
+
+    <select id="getDistinctFileNames" parameterType="String" resultType="String">
+        SELECT DISTINCT filename FROM ${value} WHERE filename IS NOT NULL
+    </select>
+
+    <sql id="keyColumnJoin">
+        <foreach collection="keyColumns" item="element" index="index"  open = "" separator=" AND " >
+            me.${element} IS NOT DISTINCT FROM other.${element}
+        </foreach>
+    </sql>
+
+    <sql id="keyColumnJoinWithAlias">
+        <foreach collection="keyColumns" item="element" index="index"  open = "" separator=" AND " >
+            ${leftAlias}.${element} IS NOT DISTINCT FROM ${rightAlias}.${element}
+        </foreach>
+    </sql>
+
+    <sql id="changeTrackingColumnsDiff">
+        <foreach collection="changeTrackingColumns" item="element" index="index"  open = "" separator=" OR" >
+            <bind name="__delta__" value="null" />
+            <bind name="__null_value__" value="null" />
+            <if test="changeTrackingColumnMaxDeltaValues != null">
+                <bind name="__delta__" value="changeTrackingColumnMaxDeltaValues[element]" />
+            </if>
+            <if test="changeTrackingColumnNullReplacements != null">
+                <bind name="__null_value__" value="changeTrackingColumnNullReplacements[element]" />
+            </if>
+            <choose>
+                <when test="__delta__ != null">
+                    abs(coalesce(me.${element},0) - coalesce(other.${element},0)) > ${__delta__}
+                </when>
+                <when test="__null_value__ != null">
+                    coalesce(me.${element},${__null_value__}) IS DISTINCT FROM coalesce(other.${element},${__null_value__})
+                </when>
+                <otherwise>
+                    me.${element} IS DISTINCT FROM other.${element}
+                </otherwise>
+            </choose>
+        </foreach>
+    </sql>
+
+    <select id="mergeCardinalityCheck" resultType="Boolean" parameterType="String">
+        SELECT EXISTS (
+            SELECT COUNT(*) row_count
+            FROM ${value}
+            WHERE __other_file_row_number__ IS NOT NULL AND file_row_number IS NOT NULL AND filename IS NOT NULL
+            GROUP BY filename, file_row_number
+            HAVING row_count > 1
+            LIMIT 1
+        )
+    </select>
+
+    <select id="getTotalRowCount" resultType="Long" parameterType="Map">
+        SELECT COUNT(1)::LONG AS c FROM ${table} WHERE ${condition}
+    </select>
+
+    <select id="getDataFromParquetFiles" resultType="Map" parameterType="Map">
+        <if test="wrap">
+            (
+        </if>
+        SELECT
+        <if test="columns != null">
+            <foreach collection="columns" item="element" index="index"  open = "" separator=", " >
+                ${element}
+            </foreach>
+        </if>
+        <if test="columns == null">
+            *
+        </if>
+        FROM read_parquet(
+        [
+            <foreach collection="files" item="element" index="index"  open = "" separator=", " >
+                '${element}'
+            </foreach>
+        ]
+        , hive_partitioning=${hivePartitioning}, union_by_name=${unionByName}, file_row_number=${addFileRowNumberColumn}, filename=${addFileNameColumn}
+        )
+        <if test="wrap">
+            )
+        </if>
+    </select>
+    <select id="getDistinctValues" parameterType="map" resultType="map">
+        SELECT DISTINCT
+        <foreach collection="columns" item="element" index="index"  open = "" separator=", " >
+            ${element}
+        </foreach>
+        FROM ${table}
+    </select>
+
+    <select id="isTableEmpty" resultType="Boolean" parameterType="String">
+        SELECT COUNT() = 0 AS is_empty
+        FROM
+        (SELECT 1 FROM ${value} LIMIT 1)
+    </select>
+
+    <update id="copyToFile" parameterType="map">
+        COPY (SELECT * FROM (${sql}) ${orderBy}) TO '${outputPath}' (${options});
+    </update>
+
+    <select id="getDuckDBRuntimeMetrics" resultType="map">
+        SELECT memory_usage, memory_limit, coalesce((SELECT SUM(size) FROM duckdb_temporary_files()), 0)::LONG AS temp_files_size,
+        (SELECT current_setting('max_temp_directory_size')) AS max_temp_directory_size
+        FROM pragma_database_size() WHERE database_name='memory'
+    </select>
+
+</mapper>
