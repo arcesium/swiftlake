@@ -9,7 +9,7 @@ body:
         Thank you for your interest in SwiftLake! Use this template to ask questions about usage or behavior.
         
         Before submitting, please check if your question has already been answered in:
-        - [Existing Issues](https://github.com/YourOrg/SwiftLake/issues)
+        - [Existing Issues](https://github.com/arcesium/swiftlake/issues)
 
   - type: textarea
     id: question
