@@ -249,10 +249,10 @@ SwiftLakeEngine swiftLakeEngine = SwiftLakeEngine.builderFor("demo").catalog(cat
 
 | Name                              | Default                                                          | Description |
 |-----------------------------------|------------------------------------------------------------------|-------------|
-| `localDir`                          | `<java.io.tmpdir>/<uuid>`                                        | Local storage where to write temp files. |
-| `memoryLimitInMiB`                  | 90% of (Total memory - JVM Maximum Memory)                       | Maximum memory of the DuckDB instance |
+| `localDir`                          | A unique directory under the system's temporary directory                                        | Local storage where to write temp files. |
+| `memoryLimitInMiB`                  | 90% of memory available outside the JVM heap, expressed in MiB                     | Maximum memory of the DuckDB instance |
 | `memoryLimitFraction`               |                                               -                   | Fraction of total memory used for DuckDB instance. |
-| `threads`                           | Available CPU cores `Runtime.getRuntime().availableProcessors()` | The number of total threads used by the DuckDB instance |
+| `threads`                           | Number of available processor cores | The number of total threads used by the DuckDB instance |
 | `tempStorageLimitInMiB`             |                                              -                    | Maximum amount of disk space DuckDB can use for temporary storage |
 | `maxPartitionWriterThreads`         | Same as threads                                                  | The number of total (Java) threads used in writing data to multiple partitions. |
 | `totalFileSizePerScanLimitInMiB`    |                                             -                     | Maximum total file size (in MiB) of matched files allowed per table scan. Prevents excessive data processing after the scan. |
@@ -280,33 +280,33 @@ SwiftLakeEngine swiftLakeEngine = SwiftLakeEngine.builderFor("demo").catalog(cat
 #### SwiftLakeFileIOProperties
 This table outlines the general file I/O configuration properties for SwiftLake. These properties control caching behavior, and metric collection for file operations.
 
-| Property Key | Default Value                                            | Description |
-|-------------------|----------------------------------------------------------|-------------|
-| `io.manifest-cache.enabled` | `true`                                                   | Enables/disables the I/O manifest cache |
-| `io.manifest-cache.expiration-interval-seconds` | 7200 (2 hours)                                           | Sets the I/O manifest cache expiration interval in seconds |
-| `io.manifest-cache.max-total-bytes` | 268,435,456 (256 MB)                                     | Sets the maximum total bytes for the I/O manifest cache |
-| `io.manifest-cache.max-content-length` | 16,777,216 (16 MB)                                       | Sets the maximum content length for the I/O manifest cache |
-| `io.file-system-cache.enabled` | `true`                                                   | Enables/disables the I/O file system cache |
-| `io.file-system-cache.base-path` | `java.io.tmpdir` + random UUID                           | Sets the base path for the I/O file system cache |
-| `io.file-system-cache.max-total-bytes` | 536,870,912 (512 MB)                                     | Sets the maximum total bytes for the I/O file system cache |
-| `io.file-system-cache.expiration-interval-seconds` | 172,800 (2 days)                                         | Sets the I/O file system cache expiration interval in seconds |
-| `delegate-io-impl` |                             -                             | Specifies the delegate file I/O implementation class |
-| `cache-io-provider` | `com.arcesium.swiftlake.io.SingletonCacheFileIOProvider` | Specifies the cache file I/O provider class |
-| `metric-collector-provider` |                  -                                        | Specifies the metric collector provider class |
+| Property Key | Default Value                                                           | Description |
+|-------------------|-------------------------------------------------------------------------|-------------|
+| `io.manifest-cache.enabled` | `true`                                                                  | Enables/disables the I/O manifest cache |
+| `io.manifest-cache.expiration-interval-seconds` | 7200 (2 hours)                                                          | Sets the I/O manifest cache expiration interval in seconds |
+| `io.manifest-cache.max-total-bytes` | 268,435,456 (256 MiB)                                                   | Sets the maximum total bytes for the I/O manifest cache |
+| `io.manifest-cache.max-content-length` | 16,777,216 (16 MiB)                                                     | Sets the maximum content length for the I/O manifest cache |
+| `io.file-system-cache.enabled` | `true`                                                                  | Enables/disables the I/O file system cache |
+| `io.file-system-cache.base-path` | A unique directory under the system's temporary directory               | Sets the base path for the I/O file system cache |
+| `io.file-system-cache.max-total-bytes` | 536,870,912 (512 MiB)                                                   | Sets the maximum total bytes for the I/O file system cache |
+| `io.file-system-cache.expiration-interval-seconds` | 172,800 (2 days)                                                        | Sets the I/O file system cache expiration interval in seconds |
+| `delegate-io-impl` | -                                                                       | Specifies the delegate file I/O implementation class |
+| `cache-io-provider` | <code>com.arcesium.swiftlake.io.<br>SingletonCacheFileIOProvider</code> | Specifies the cache file I/O provider class |
+| `metric-collector-provider` | -                                                                       | Specifies the metric collector provider class |
 
 #### SwiftLakeS3FileIOProperties
 This table presents the S3-specific configuration properties for SwiftLake. These properties are used to configure the connection to Amazon S3 or S3-compatible storage services.
 
-| Property Key | Default Value | Description                                                                                                                                                  |
-|--------------|---------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `s3.crt.target-throughput-gbps` | 10.0 | Target throughput in Gbps for the S3 CRT (Common Runtime) client. This setting helps optimize performance when creating the S3 CRT client.                   |
-| `s3.crt.max-concurrency` | - | Maximum number of concurrent requests for the S3 CRT client. Used to control the level of parallelism in S3 operations.                                      |
-| `s3.crt.max-native-memory-limit-bytes` | - | Maximum native memory limit in bytes for the S3 CRT client. Helps manage memory usage of the client.                                                         |
-| `s3.crt.multipart.threshold-bytes` | - | Threshold in bytes for switching to multipart uploads in the S3 CRT client. Files larger than this size will use multipart uploads.                          |
-| `s3.transfer-manager-provider` | `com.arcesium.swiftlake.aws.SingletonS3TransferManagerProvider` | Specifies the class name for the S3 transfer manager provider. This class is responsible for creating and managing S3TransferManager instances.              |
-| `s3.transfer-manager-provider.*` | - | Prefix for additional properties specific to the configured S3 transfer manager provider. These properties are passed to the provider during initialization. |
-| `s3.duckdb.s3-extension-enabled` | false | Enables or disables the DuckDB S3 extension integration. When true, allows for direct querying of S3 data using DuckDB.                                      |
-| `s3.duckdb.s3-extension-threshold-bytes` | - | Minimum file size (in bytes) for using DuckDB S3 integration. If the file size is greater than or equal to this value, DuckDB S3 integration is used.        |
+| Property Key | Default Value                                                                  | Description                                                                                                                                                  |
+|--------------|--------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `s3.crt.target-throughput-gbps` | 10.0                                                                           | Target throughput in Gbps for the S3 CRT (Common Runtime) client. This setting helps optimize performance when creating the S3 CRT client.                   |
+| `s3.crt.max-concurrency` | -                                                                              | Maximum number of concurrent requests for the S3 CRT client. Used to control the level of parallelism in S3 operations.                                      |
+| `s3.crt.max-native-memory-limit-bytes` | -                                                                              | Maximum native memory limit in bytes for the S3 CRT client. Helps manage memory usage of the client.                                                         |
+| `s3.crt.multipart.threshold-bytes` | -                                                                              | Threshold in bytes for switching to multipart uploads in the S3 CRT client. Files larger than this size will use multipart uploads.                          |
+| `s3.transfer-manager-provider` | <code>com.arcesium.swiftlake.aws.<br>SingletonS3TransferManagerProvider</code> | Specifies the class name for the S3 transfer manager provider. This class is responsible for creating and managing S3TransferManager instances.              |
+| `s3.transfer-manager-provider.*` | -                                                                              | Prefix for additional properties specific to the configured S3 transfer manager provider. These properties are passed to the provider during initialization. |
+| `s3.duckdb.s3-extension-enabled` | false                                                                          | Enables or disables the DuckDB S3 extension integration. When true, allows for direct querying of S3 data using DuckDB.                                      |
+| `s3.duckdb.s3-extension-threshold-bytes` | -                                                                              | Minimum file size (in bytes) for using DuckDB S3 integration. If the file size is greater than or equal to this value, DuckDB S3 integration is used.        |
 
 #### Configuring Caching
 To enable and configure caching when creating a catalog, you can use the following properties:
@@ -326,7 +326,7 @@ By setting these properties, you enable a caching layer on top of the S3 storage
 You can further customize the caching behavior using the `io.manifest-cache` and `io.file-system-cache` properties listed in the SwiftLakeFileIOProperties table above. For example:
 
 ```java
-properties.put("io.manifest-cache.max-total-bytes", "536870912"); // 512 MB
+properties.put("io.manifest-cache.max-total-bytes", "536870912"); // 512 MiB
 properties.put("io.file-system-cache.expiration-interval-seconds", "86400"); // 1 day
 ```
 

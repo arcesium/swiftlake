@@ -6,6 +6,7 @@ on:
       - v0.*
   pull_request:
     paths-ignore:
+      - '.github/ISSUE_TEMPLATE/**'
       - .gitignore
       - README.md
       - CONTRIBUTING.md
