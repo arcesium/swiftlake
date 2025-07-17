@@ -11,6 +11,7 @@ buildscript {
 plugins {
     id 'java-library'
     id 'maven-publish'
+    id 'org.jreleaser' version '1.19.0'
 }
 
 allprojects {
@@ -26,8 +27,11 @@ subprojects {
     apply plugin: 'maven-publish'
     apply plugin: 'net.ltgt.errorprone'
     apply plugin: 'com.diffplug.spotless'
+    apply plugin: 'org.jreleaser'
 
     java {
+        withJavadocJar()
+        withSourcesJar()
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -65,6 +69,58 @@ subprojects {
         publications {
             maven(MavenPublication) {
                 from components.java
+
+                pom {
+                    name = 'SwiftLake'
+                    description = 'A lightweight Java library for cloud data lakes'
+                    url = 'https://github.com/arcesium/swiftlake'
+
+                    licenses {
+                        license {
+                            name = 'The Apache License, Version 2.0'
+                            url = 'https://www.apache.org/licenses/LICENSE-2.0.txt'
+                        }
+                    }
+
+                    developers {
+                        developer {
+                            id = 'mothukur'
+                            name = 'Rama Krishna Mothukuri'
+                            email = 'mothukur@arcesium.com'
+                        }
+                    }
+
+                    scm {
+                        connection = 'scm:git:git://github.com/arcesium/swiftlake.git'
+                        developerConnection = 'scm:git:ssh://github.com:arcesium/swiftlake.git'
+                        url = 'https://github.com/arcesium/swiftlake/tree/main'
+                    }
+                }
+            }
+        }
+        repositories {
+            maven {
+                url = layout.buildDirectory.dir('staging-deploy')
+            }
+        }
+    }
+
+    jreleaser {
+        signing {
+            active = 'ALWAYS'
+            armored = true
+            mode = 'FILE'
+        }
+        deploy {
+            maven {
+                mavenCentral {
+                    sonatype {
+                        active = 'ALWAYS'
+                        applyMavenCentralRules = true
+                        url = 'https://central.sonatype.com/api/v1/publisher'
+                        stagingRepository('build/staging-deploy')
+                    }
+                }
             }
         }
     }

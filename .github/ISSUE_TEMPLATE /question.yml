@@ -1,0 +1,61 @@
+name: Question
+description: Ask a question about using or understanding SwiftLake
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## SwiftLake Question
+        Thank you for your interest in SwiftLake! Use this template to ask questions about usage or behavior.
+        
+        Before submitting, please check if your question has already been answered in:
+        - [Existing Issues](https://github.com/YourOrg/SwiftLake/issues)
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What would you like to know about SwiftLake?
+      placeholder: Please be as specific as possible to help us provide a clear answer.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Please provide any relevant context that might help us answer your question.
+      placeholder: |
+        - What are you trying to accomplish?
+        - What have you already tried?
+        - Are you using a specific version of SwiftLake?
+        - What environment are you using (OS, JVM version, etc.)?
+    validations:
+      required: false
+
+  - type: textarea
+    id: code-example
+    attributes:
+      label: Code Example
+      description: If applicable, please provide code or configuration examples related to your question.
+      render: java
+      placeholder: |
+        ```java
+        // Your code example here
+        ```
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-information
+    attributes:
+      label: Additional Information
+      description: Any other information that might be helpful?
+      placeholder: Add any other context, screenshots, logs, etc. that might help us understand your question.
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for your question! We'll do our best to respond promptly.

@@ -1,4 +1,9 @@
 # SwiftLake
+[![Build Status](https://github.com/arcesium/swiftlake/actions/workflows/java-ci.yml/badge.svg)](https://github.com/arcesium/swiftlake/actions/workflows/java-ci.yml?query=branch%3Amain)
+[![Maven Central](https://img.shields.io/maven-central/v/com.arcesium.swiftlake/swiftlake-core?color=31c653&label=maven%20central)](https://central.sonatype.com/artifact/com.arcesium.swiftlake/swiftlake-core)
+[![JavaDoc](https://www.javadoc.io/badge/com.arcesium.swiftlake/swiftlake-core.svg?color=31c653)](https://www.javadoc.io/doc/com.arcesium.swiftlake)
+[![License](https://img.shields.io/:license-apache-31c653.svg)](https://www.apache.org/licenses/LICENSE-2.0.html)
+
 ## Overview
 
 SwiftLake is a Java library that bridges the gap between traditional SQL databases and cloud-native data lakes. By combining Apache Iceberg and DuckDB, it provides a lightweight, single-node solution that delivers SQL familiarity with cloud storage benefits, without the complexity of distributed systems.

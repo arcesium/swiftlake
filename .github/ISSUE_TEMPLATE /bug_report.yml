@@ -1,0 +1,89 @@
+name: Bug report
+description: Report a problem, bug or issue with SwiftLake
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## SwiftLake Bug Report
+        Thank you for taking the time to file a bug report. Please provide as much detail as possible to help us resolve the issue.
+
+  - type: dropdown
+    id: version
+    attributes:
+      label: SwiftLake version
+      description: What version of SwiftLake are you using?
+      options:
+        - "0.1.0 (latest release)"
+        - "main (development)"
+        - "Other (please specify in description)"
+    validations:
+      required: true
+
+  - type: input
+    id: java-version
+    attributes:
+      label: Java version
+      description: What Java version are you using?
+      placeholder: "e.g., OpenJDK 17.0.2"
+    validations:
+      required: false
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: What operating system are you using?
+      placeholder: "e.g., Ubuntu 22.04, macOS 13.2, Windows 11"
+    validations:
+      required: false
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug description
+      description: Please describe the problem, what you expected to happen, and how to reproduce it.
+      placeholder: |
+        Steps to reproduce:
+        1. 
+        2. 
+        3. 
+
+        Expected behavior:
+
+        Actual behavior:
+
+        Stacktraces or error messages:
+    validations:
+      required: true
+
+  - type: textarea
+    id: configuration
+    attributes:
+      label: Configuration
+      description: Please share your SwiftLake configuration if relevant.
+      placeholder: |
+        ```java
+        // Paste your configuration here
+        ```
+      render: java
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      description: We encourage contributions to SwiftLake. Would you or your organization be willing to contribute a fix?
+      options:
+        - label: I can contribute this bug fix independently
+        - label: I would be willing to contribute this bug fix with guidance
+        - label: I cannot contribute to this bug fix at this time
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        ## Additional Information
+        You can include files by dragging and dropping them into this report.
