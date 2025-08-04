@@ -16,6 +16,7 @@
 package com.arcesium.swiftlake.commands;
 
 import com.arcesium.swiftlake.SwiftLakeEngine;
+import com.arcesium.swiftlake.common.DateTimeUtil;
 import com.arcesium.swiftlake.common.FileUtil;
 import com.arcesium.swiftlake.common.InputFile;
 import com.arcesium.swiftlake.common.InputFiles;
@@ -34,8 +35,10 @@ import java.io.File;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.sql.Timestamp;
-import java.time.format.DateTimeFormatter;
-import java.time.temporal.TemporalAccessor;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -131,53 +134,6 @@ public class WriteUtil {
     Set<String> allColumnsSet = new HashSet<>(getColumns(table));
     for (String column : columns) {
       ValidationException.check(allColumnsSet.contains(column), "Invalid column %s", column);
-    }
-  }
-
-  /**
-   * Validates the columns for change tracking and key columns.
-   *
-   * @param allColumns List of all column names in the table
-   * @param keyColumns List of key column names
-   * @param changeTrackingColumns List of change tracking column names
-   * @param changeTrackingMetadataMap Map of change tracking metadata
-   * @throws ValidationException if any validation fails
-   */
-  public static void validateColumns(
-      List<String> allColumns,
-      List<String> keyColumns,
-      List<String> changeTrackingColumns,
-      Map<String, ChangeTrackingMetadata<?>> changeTrackingMetadataMap) {
-    Set<String> allColumnsSet = new HashSet<>(allColumns);
-
-    ValidationException.check(
-        keyColumns != null && !keyColumns.isEmpty(), "Key columns cannot be empty");
-    for (String column : keyColumns) {
-      ValidationException.check(allColumnsSet.contains(column), "Invalid key column %s", column);
-    }
-
-    if (changeTrackingColumns != null && !changeTrackingColumns.isEmpty()) {
-      for (String column : changeTrackingColumns) {
-        ValidationException.check(
-            allColumnsSet.contains(column), "Invalid change tracking column %s", column);
-      }
-    }
-    if (changeTrackingMetadataMap != null) {
-      Set<String> changeTrackingColumnSet =
-          changeTrackingColumns != null ? new HashSet<>(changeTrackingColumns) : new HashSet<>();
-
-      for (Map.Entry<String, ChangeTrackingMetadata<?>> entry :
-          changeTrackingMetadataMap.entrySet()) {
-        ValidationException.check(
-            changeTrackingColumnSet.contains(entry.getKey()),
-            "Invalid change tracking column %s",
-            entry.getKey());
-        ValidationException.check(
-            entry.getValue().getMaxDeltaValue() == null
-                || entry.getValue().getNullReplacement() == null,
-            "Provide either max delta value or null value for the change tracking column %s",
-            entry.getKey());
-      }
     }
   }
 
@@ -345,39 +301,10 @@ public class WriteUtil {
         if (value instanceof BigDecimal) return value;
 
         throw new ValidationException("Invalid decimal value %s", value);
-      } else if (typeId == Type.TypeID.DATE) {
-        ValidationException.check(
-            value instanceof TemporalAccessor || value instanceof java.sql.Date,
-            "Invalid date value %s",
-            value);
-        if (value instanceof java.sql.Date) {
-          value = ((java.sql.Date) value).toLocalDate();
-        }
-        DateTimeFormatter dtf = DateTimeFormatter.ISO_LOCAL_DATE;
-        return dtf.format((TemporalAccessor) value);
-      } else if (typeId == Type.TypeID.TIME) {
-        ValidationException.check(
-            value instanceof TemporalAccessor, "Invalid time value %s", value);
-
-        DateTimeFormatter dtf = DateTimeFormatter.ISO_LOCAL_TIME;
-        return dtf.format((TemporalAccessor) value);
-      } else if (typeId == Type.TypeID.TIMESTAMP) {
-        if (((Types.TimestampType) dataType).shouldAdjustToUTC()) {
-          ValidationException.check(
-              value instanceof TemporalAccessor, "Invalid timestamptz value %s", value);
-          DateTimeFormatter dtf = DateTimeFormatter.ISO_DATE_TIME;
-          return dtf.format((TemporalAccessor) value);
-        } else {
-          ValidationException.check(
-              value instanceof TemporalAccessor || value instanceof Timestamp,
-              "Invalid timestamp value %s",
-              value);
-          if (value instanceof Timestamp) {
-            value = ((Timestamp) value).toLocalDateTime();
-          }
-          DateTimeFormatter dtf = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
-          return dtf.format((TemporalAccessor) value);
-        }
+      } else if (typeId == Type.TypeID.DATE
+          || typeId == Type.TypeID.TIME
+          || typeId == Type.TypeID.TIMESTAMP) {
+        return getFormattedValueForDateTimes(dataType, value);
       }
     } catch (Exception e) {
       throw new SwiftLakeException(
@@ -689,28 +616,36 @@ public class WriteUtil {
    * @return Formatted string representation of the value
    */
   public static String getFormattedValueForDateTimes(Type type, Object value) {
-    String formattedValue = null;
-    if (type.typeId() == Type.TypeID.DATE) {
+    Type.TypeID typeId = type.typeId();
+    if (typeId == Type.TypeID.DATE) {
+      ValidationException.check(
+          value instanceof LocalDate || value instanceof java.sql.Date,
+          "Invalid date value %s",
+          value);
       if (value instanceof java.sql.Date) {
         value = ((java.sql.Date) value).toLocalDate();
       }
-      DateTimeFormatter dtf = DateTimeFormatter.ISO_LOCAL_DATE;
-      formattedValue = dtf.format((TemporalAccessor) value);
-    } else if (type.typeId() == Type.TypeID.TIME) {
-      DateTimeFormatter dtf = DateTimeFormatter.ISO_LOCAL_TIME;
-      formattedValue = dtf.format((TemporalAccessor) value);
-    } else if (type.typeId() == Type.TypeID.TIMESTAMP) {
+      return DateTimeUtil.formatLocalDate((LocalDate) value);
+    } else if (typeId == Type.TypeID.TIME) {
+      ValidationException.check(value instanceof LocalTime, "Invalid time value %s", value);
+      return DateTimeUtil.formatLocalTimeWithMicros((LocalTime) value);
+    } else if (typeId == Type.TypeID.TIMESTAMP) {
       if (((Types.TimestampType) type).shouldAdjustToUTC()) {
-        DateTimeFormatter dtf = DateTimeFormatter.ISO_DATE_TIME;
-        formattedValue = dtf.format((TemporalAccessor) value);
+        ValidationException.check(
+            value instanceof OffsetDateTime, "Invalid timestamptz value %s", value);
+        return DateTimeUtil.formatOffsetDateTimeWithMicros((OffsetDateTime) value);
       } else {
+        ValidationException.check(
+            value instanceof LocalDateTime || value instanceof Timestamp,
+            "Invalid timestamp value %s",
+            value);
         if (value instanceof Timestamp) {
           value = ((Timestamp) value).toLocalDateTime();
         }
-        DateTimeFormatter dtf = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
-        formattedValue = dtf.format((TemporalAccessor) value);
+        return DateTimeUtil.formatLocalDateTimeWithMicros((LocalDateTime) value);
       }
+    } else {
+      throw new ValidationException("Invalid type %s", type);
     }
-    return formattedValue;
   }
 }

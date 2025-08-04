@@ -16,6 +16,7 @@
 package com.arcesium.swiftlake.sql;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyString;
@@ -25,6 +26,7 @@ import static org.mockito.Mockito.when;
 
 import com.arcesium.swiftlake.TestUtil;
 import com.arcesium.swiftlake.common.ParquetUtil;
+import com.arcesium.swiftlake.common.ValidationException;
 import com.arcesium.swiftlake.expressions.Expression;
 import com.arcesium.swiftlake.expressions.Expressions;
 import com.arcesium.swiftlake.io.SwiftLakeFileIO;
@@ -916,6 +918,39 @@ class SchemaEvolutionTest {
             + "OR ((list_1 IS NOT NULL OR string_1 LIKE 'abc%') AND (string_1 LIKE 'xyz%' AND string_1 IN (('a')::STRING, ('b')::STRING)))) "
             + "OR (float_1 < (451.14)::FLOAT AND (isnan(float_1) OR float_1 >= (99.22)::FLOAT)))";
     assertThat(sql).isEqualTo(expected);
+  }
+
+  @ParameterizedTest
+  @MethodSource("provideColumnNamesAndExpectedResults")
+  void testEscapeColumnName(String input, String expected) {
+    String result = schemaEvolution.escapeColumnName(input);
+    assertThat(result).isEqualTo(expected);
+  }
+
+  static Stream<Arguments> provideColumnNamesAndExpectedResults() {
+    return Stream.of(
+        // Basic cases
+        Arguments.of("column", "\"column\""),
+        Arguments.of("", "\"\""),
+
+        // Special cases that need proper handling
+        Arguments.of("column name", "\"column name\""),
+        Arguments.of("'column\tname'", "\"'column\tname'\""),
+        Arguments.of("SELECT", "\"SELECT\""),
+        Arguments.of("123numericStart", "\"123numericStart\""),
+
+        // The most important test cases - handling of quotes
+        Arguments.of("column\"name", "\"column\"\"name\""),
+        Arguments.of("\"column\"", "\"\"\"column\"\"\""),
+        Arguments.of("col\"um\"n", "\"col\"\"um\"\"n\""),
+        Arguments.of("\"\"column\"\"", "\"\"\"\"\"column\"\"\"\"\""));
+  }
+
+  @Test
+  void testEscapeColumnName_nullInput() {
+    assertThatThrownBy(() -> schemaEvolution.escapeColumnName(null))
+        .isInstanceOf(ValidationException.class)
+        .hasMessage("Column name cannot be null");
   }
 
   private void executeWithMockedStaticParquetUtil(Schema schema, Runnable runnable) {

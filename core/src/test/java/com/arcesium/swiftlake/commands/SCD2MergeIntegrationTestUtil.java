@@ -92,7 +92,12 @@ public class SCD2MergeIntegrationTestUtil {
         effectiveTimestamp,
         null,
         Map.of(),
-        null);
+        null,
+        "effective_start",
+        "effective_end",
+        false,
+        "operation_type",
+        "D");
   }
 
   public static void performSCD2Merge(
@@ -148,6 +153,67 @@ public class SCD2MergeIntegrationTestUtil {
         builder.currentFlagColumn(currentFlagColumn);
       }
       builder.execute();
+    }
+  }
+
+  public static void performSCD2Merge(
+      SwiftLakeEngine swiftLakeEngine,
+      boolean isSnapshotMode,
+      String tableName,
+      String tableFilter,
+      List<String> keyColumns,
+      String sourceSql,
+      LocalDateTime effectiveTimestamp,
+      List<String> changeTrackingColumns,
+      Map<String, ChangeTrackingMetadata<?>> changeTrackingMetadata,
+      String currentFlagColumn,
+      String effectiveStartColumn,
+      String effectiveEndColumn,
+      boolean generateEffectiveTimestamp,
+      String operationTypeColumn,
+      String deleteOperationValue) {
+
+    if (isSnapshotMode) {
+      var builder =
+          swiftLakeEngine
+              .applySnapshotAsSCD2(tableName)
+              .tableFilterSql(tableFilter)
+              .sourceSql(sourceSql);
+      SCD2Merge.SnapshotModeSetKeyColumns setKeyColummns = null;
+      if (generateEffectiveTimestamp) {
+        setKeyColummns = builder.generateEffectiveTimestamp(true);
+      } else {
+        setKeyColummns = builder.effectiveTimestamp(effectiveTimestamp);
+      }
+      setKeyColummns
+          .keyColumns(keyColumns)
+          .effectivePeriodColumns(effectiveStartColumn, effectiveEndColumn)
+          .processSourceTables(false)
+          .currentFlagColumn(currentFlagColumn)
+          .changeTrackingColumns(changeTrackingColumns)
+          .changeTrackingMetadata(changeTrackingMetadata)
+          .execute();
+    } else {
+      var builder =
+          swiftLakeEngine
+              .applyChangesAsSCD2(tableName)
+              .tableFilterSql(tableFilter)
+              .sourceSql(sourceSql);
+      SCD2Merge.SetKeyColumns setKeyColummns = null;
+      if (generateEffectiveTimestamp) {
+        setKeyColummns = builder.generateEffectiveTimestamp(true);
+      } else {
+        setKeyColummns = builder.effectiveTimestamp(effectiveTimestamp);
+      }
+      setKeyColummns
+          .keyColumns(keyColumns)
+          .operationTypeColumn(operationTypeColumn, deleteOperationValue)
+          .effectivePeriodColumns(effectiveStartColumn, effectiveEndColumn)
+          .currentFlagColumn(currentFlagColumn)
+          .changeTrackingColumns(changeTrackingColumns)
+          .changeTrackingMetadata(changeTrackingMetadata)
+          .processSourceTables(false)
+          .execute();
     }
   }
 }

@@ -16,6 +16,7 @@
 package com.arcesium.swiftlake.commands;
 
 import com.arcesium.swiftlake.SwiftLakeEngine;
+import com.arcesium.swiftlake.common.DateTimeUtil;
 import com.arcesium.swiftlake.common.FileUtil;
 import com.arcesium.swiftlake.common.InputFiles;
 import com.arcesium.swiftlake.common.ValidationException;
@@ -38,7 +39,6 @@ import java.io.File;
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -54,6 +54,7 @@ import org.apache.iceberg.IsolationLevel;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.types.Type;
+import org.apache.iceberg.types.Types;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -130,6 +131,8 @@ public class SCD2Merge {
   private Transaction executeWithoutCommit() {
     // Validate columns and set up effective period columns
     WriteUtil.validateColumns(table, properties.getColumns());
+    Schema schema = table.schema();
+    validateSCD2Columns(schema);
     List<String> allColumnsIncludingEffectivePeriod = WriteUtil.getColumns(table);
     Set<String> effectivePeriodColumns = new HashSet<>();
     effectivePeriodColumns.add(properties.getEffectiveStartColumn());
@@ -149,15 +152,14 @@ public class SCD2Merge {
           WriteUtil.getRemainingColumns(properties.getAllColumns(), properties.getKeyColumns()));
     }
     // Validate columns and table filter
-    WriteUtil.validateColumns(
+    validateColumns(
         properties.getAllColumns(),
         properties.getKeyColumns(),
         properties.getChangeTrackingColumns(),
         properties.getChangeTrackingMetadataMap());
+
     WriteUtil.validateTableFilterColumns(
         properties.getTableFilterColumns(), properties.getKeyColumns());
-    Schema schema = table.schema();
-    validateEffectivePeriodColumns(schema);
     processChangeTrackingMetadata(schema);
 
     // Create temporary directory for merge operation
@@ -173,10 +175,9 @@ public class SCD2Merge {
     List<InputFiles> sourceSqlTmpFiles = null;
     try {
       // Generate effective timestamp if needed
-      if (properties.getEffectiveTimestamp() == null && properties.isGenerateEffectiveTimestamp()) {
+      if (properties.isGenerateEffectiveTimestamp()) {
         properties.setEffectiveTimestamp(
-            DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(
-                LocalDateTime.now(ZoneId.systemDefault())));
+            DateTimeUtil.formatLocalDateTimeWithMicros(LocalDateTime.now(ZoneId.systemDefault())));
       }
 
       // Prepare schema for input data
@@ -242,6 +243,9 @@ public class SCD2Merge {
                 + ")";
       }
 
+      // Apply table filter
+      sourceTableName = this.createTableFilter(sourceTableName);
+
       // Check if source is empty
       if (properties.isSkipEmptySource()) {
         if (sourceTableName == null || commonDao.isTableEmpty(sourceTableName)) {
@@ -250,8 +254,6 @@ public class SCD2Merge {
         }
       }
 
-      // Apply table filter
-      sourceTableName = this.createTableFilter(sourceTableName);
       // Set up file filter and conflict detection filter
       Expression tableFilter = properties.getTableFilter();
       Expression conflictDetectionFilter = tableFilter;
@@ -468,21 +470,144 @@ public class SCD2Merge {
     return Expressions.and(tableFilter, effectiveEndFilter);
   }
 
-  private void validateEffectivePeriodColumns(Schema schema) {
-    if (properties.getCurrentFlagColumn() != null
-        && schema.findField(properties.getCurrentFlagColumn()) == null) {
-      throw new ValidationException("Column %s does not exist.", properties.getCurrentFlagColumn());
+  private void validateColumns(
+      List<String> allColumns,
+      List<String> keyColumns,
+      List<String> changeTrackingColumns,
+      Map<String, ChangeTrackingMetadata<?>> changeTrackingMetadataMap) {
+    Set<String> allColumnsSet = new HashSet<>(allColumns);
+
+    for (String column : keyColumns) {
+      ValidationException.check(allColumnsSet.contains(column), "Invalid key column %s", column);
     }
-    if (properties.getEffectiveStartColumn() != null
-        && schema.findField(properties.getEffectiveStartColumn()) == null) {
-      throw new ValidationException(
-          "Column %s does not exist.", properties.getEffectiveStartColumn());
+    Set<String> keyColumnsSet = new HashSet<>(keyColumns);
+    if (changeTrackingColumns != null && !changeTrackingColumns.isEmpty()) {
+      for (String column : changeTrackingColumns) {
+        ValidationException.check(
+            allColumnsSet.contains(column), "Invalid change tracking column %s", column);
+        ValidationException.check(
+            !keyColumnsSet.contains(column),
+            "Column '%s' cannot be both a key column and a change tracking column",
+            column);
+      }
     }
-    if (properties.getEffectiveEndColumn() != null
-        && schema.findField(properties.getEffectiveEndColumn()) == null) {
-      throw new ValidationException(
-          "Column %s does not exist.", properties.getEffectiveEndColumn());
+    if (changeTrackingMetadataMap != null) {
+      Set<String> changeTrackingColumnSet =
+          changeTrackingColumns != null ? new HashSet<>(changeTrackingColumns) : new HashSet<>();
+
+      for (Map.Entry<String, ChangeTrackingMetadata<?>> entry :
+          changeTrackingMetadataMap.entrySet()) {
+        ValidationException.check(
+            changeTrackingColumnSet.contains(entry.getKey()),
+            "Invalid change tracking column %s",
+            entry.getKey());
+        ValidationException.check(
+            entry.getValue().getMaxDeltaValue() == null
+                || entry.getValue().getNullReplacement() == null,
+            "Provide either max delta value or null value for the change tracking column %s",
+            entry.getKey());
+      }
     }
+  }
+
+  private void validateSCD2Columns(Schema schema) {
+    // Validate effective timestamp is provided or will be generated
+    ValidationException.check(
+        properties.isGenerateEffectiveTimestamp()
+            || (properties.getEffectiveTimestamp() != null
+                && !properties.getEffectiveTimestamp().isBlank()),
+        "Effective timestamp is mandatory for SCD2 operations");
+
+    // Validate effective start column
+    ValidationException.check(
+        properties.getEffectiveStartColumn() != null
+            && !properties.getEffectiveStartColumn().isBlank(),
+        "Effective start column is mandatory for SCD2 operations");
+
+    Types.NestedField effectiveStartField = schema.findField(properties.getEffectiveStartColumn());
+    ValidationException.checkNotNull(
+        effectiveStartField,
+        "Effective start column '%s' does not exist in the table schema",
+        properties.getEffectiveStartColumn());
+
+    ValidationException.check(
+        effectiveStartField.type() instanceof Types.TimestampType startTimestampType
+            && !startTimestampType.shouldAdjustToUTC(),
+        "Effective start column must be a timestamp without timezone type, found: %s",
+        effectiveStartField.type());
+
+    // Validate effective end column
+    ValidationException.check(
+        properties.getEffectiveEndColumn() != null && !properties.getEffectiveEndColumn().isBlank(),
+        "Effective end column is mandatory for SCD2 operations");
+
+    Types.NestedField effectiveEndField = schema.findField(properties.getEffectiveEndColumn());
+    ValidationException.checkNotNull(
+        effectiveEndField,
+        "Effective end column '%s' does not exist in the table schema",
+        properties.getEffectiveEndColumn());
+
+    ValidationException.check(
+        effectiveEndField.type() instanceof Types.TimestampType endTimestampType
+            && !endTimestampType.shouldAdjustToUTC(),
+        "Effective end column must be a timestamp without timezone type, found: %s",
+        effectiveEndField.type());
+
+    // Validate effective columns are distinct
+    ValidationException.check(
+        !properties.getEffectiveStartColumn().equalsIgnoreCase(properties.getEffectiveEndColumn()),
+        "Effective start column and effective end column cannot be the same");
+
+    // Validate current flag column if provided
+    if (properties.getCurrentFlagColumn() != null) {
+      // Validate current flag doesn't conflict with effective columns
+      ValidationException.check(
+          !properties.getCurrentFlagColumn().equalsIgnoreCase(properties.getEffectiveStartColumn())
+              && !properties
+                  .getCurrentFlagColumn()
+                  .equalsIgnoreCase(properties.getEffectiveEndColumn()),
+          "Current flag column cannot be the same as effective start or end column");
+
+      Types.NestedField currentFlagField = schema.findField(properties.getCurrentFlagColumn());
+      ValidationException.checkNotNull(
+          currentFlagField,
+          "Current flag column '%s' does not exist in the table schema",
+          properties.getCurrentFlagColumn());
+
+      ValidationException.check(
+          currentFlagField.type() instanceof Types.BooleanType,
+          "Current flag column must be a boolean type, found: %s",
+          currentFlagField.type());
+    }
+
+    // Additional validations for CHANGES mode
+    if (properties.getMode() == SCD2MergeMode.CHANGES) {
+      validateChangesMode();
+    }
+  }
+
+  private void validateChangesMode() {
+    // Validate operation type column
+    ValidationException.check(
+        properties.getOperationTypeColumn() != null
+            && !properties.getOperationTypeColumn().isBlank(),
+        "Operation type column is mandatory for SCD2 CHANGES mode");
+
+    // Validate delete operation value
+    ValidationException.check(
+        properties.getDeleteOperationValue() != null
+            && !properties.getDeleteOperationValue().isBlank(),
+        "Delete operation value is mandatory for SCD2 CHANGES mode");
+
+    // Escape and process column name
+    properties.setOperationTypeColumn(
+        swiftLakeEngine.getSchemaEvolution().escapeColumnName(properties.getOperationTypeColumn()));
+
+    properties.setDeleteOperationValue(
+        swiftLakeEngine
+            .getSchemaEvolution()
+            .getPrimitiveTypeStringValueForSql(
+                Types.StringType.get(), properties.getDeleteOperationValue(), true));
   }
 
   private String getInputDataSql(SCD2MergeProperties properties) {
@@ -522,12 +647,12 @@ public class SCD2Merge {
 
   private void setTimestampStrings(SCD2MergeProperties properties, Schema schema) {
     if (properties.getEffectiveTimestamp() != null) {
-      Type kdType = schema.findField(properties.getEffectiveStartColumn()).type();
+      Type effectiveStartType = schema.findField(properties.getEffectiveStartColumn()).type();
       properties.setEffectiveTimestamp(
           swiftLakeEngine
               .getSchemaEvolution()
               .getPrimitiveTypeValueForSql(
-                  kdType.asPrimitiveType(), properties.getEffectiveTimestamp()));
+                  effectiveStartType.asPrimitiveType(), properties.getEffectiveTimestamp()));
     }
 
     Type effectiveEndType = schema.findField(properties.getEffectiveEndColumn()).type();
@@ -923,8 +1048,8 @@ public class SCD2Merge {
 
     @Override
     public SetKeyColumns effectiveTimestamp(String effectiveTimestamp) {
-      checkLocalDateTimeString(effectiveTimestamp, "effectiveTimestamp");
-      properties.setEffectiveTimestamp(effectiveTimestamp);
+      properties.setEffectiveTimestamp(
+          getIsoLocalDateTimeString(getLocalDateTime(effectiveTimestamp, "effectiveTimestamp")));
       return this;
     }
 
@@ -949,6 +1074,8 @@ public class SCD2Merge {
 
     @Override
     public SetOperationColumn keyColumns(List<String> keyColumns) {
+      ValidationException.check(
+          keyColumns != null && !keyColumns.isEmpty(), "Key columns cannot be null or empty");
       properties.setKeyColumns(keyColumns.stream().distinct().collect(Collectors.toList()));
       return this;
     }
@@ -979,12 +1106,16 @@ public class SCD2Merge {
 
     @Override
     public Builder changeTrackingMetadata(Map<String, ChangeTrackingMetadata<?>> metadataMap) {
-      properties.getChangeTrackingMetadataMap().putAll(metadataMap);
+      if (metadataMap != null) {
+        properties.getChangeTrackingMetadataMap().putAll(metadataMap);
+      }
       return this;
     }
 
     @Override
     public <T> Builder changeTrackingMetadata(String column, ChangeTrackingMetadata<T> metadata) {
+      ValidationException.checkNotNull(column, "Column name cannot be null");
+      ValidationException.checkNotNull(metadata, "Change tracking metadata cannot be null");
       properties.getChangeTrackingMetadataMap().put(column, metadata);
       return this;
     }
@@ -1270,17 +1401,16 @@ public class SCD2Merge {
     CommitMetrics execute();
   }
 
-  private static void checkLocalDateTimeString(String localDateTimeString, String name) {
+  private static LocalDateTime getLocalDateTime(String localDateTimeString, String name) {
     if (localDateTimeString == null) {
-      return;
+      return null;
     }
     String message =
-        String.format(
-            "Invalid %s. Use ISO date-time format yyyy-MM-dd'T'HH:mm:ss.SSSSSSSSS.", name);
+        String.format("Invalid %s. Use ISO date-time format yyyy-MM-dd'T'HH:mm:ss.SSSSSS.", name);
     try {
-      LocalDateTime localDateTime =
-          LocalDateTime.parse(localDateTimeString, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+      LocalDateTime localDateTime = DateTimeUtil.parseLocalDateTimeToMicros(localDateTimeString);
       ValidationException.checkNotNull(localDateTime, message);
+      return localDateTime;
     } catch (Exception ex) {
       throw new ValidationException(message);
     }
@@ -1289,7 +1419,7 @@ public class SCD2Merge {
   private static String getIsoLocalDateTimeString(LocalDateTime localDateTime) {
     if (localDateTime == null) return null;
 
-    return DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(localDateTime);
+    return DateTimeUtil.formatLocalDateTimeWithMicros(localDateTime);
   }
 
   public static class SnapshotModeBuilderImpl
@@ -1369,8 +1499,8 @@ public class SCD2Merge {
 
     @Override
     public SnapshotModeSetKeyColumns effectiveTimestamp(String effectiveTimestamp) {
-      checkLocalDateTimeString(effectiveTimestamp, "effectiveTimestamp");
-      properties.setEffectiveTimestamp(effectiveTimestamp);
+      properties.setEffectiveTimestamp(
+          getIsoLocalDateTimeString(getLocalDateTime(effectiveTimestamp, "effectiveTimestamp")));
       return this;
     }
 
@@ -1389,6 +1519,8 @@ public class SCD2Merge {
 
     @Override
     public SnapshotModeSetEffectivePeriodColumns keyColumns(List<String> keyColumns) {
+      ValidationException.check(
+          keyColumns != null && !keyColumns.isEmpty(), "Key columns cannot be null or empty");
       properties.setKeyColumns(keyColumns.stream().distinct().collect(Collectors.toList()));
       return this;
     }
@@ -1420,13 +1552,17 @@ public class SCD2Merge {
     @Override
     public SnapshotModeBuilder changeTrackingMetadata(
         Map<String, ChangeTrackingMetadata<?>> metadataMap) {
-      properties.getChangeTrackingMetadataMap().putAll(metadataMap);
+      if (metadataMap != null) {
+        properties.getChangeTrackingMetadataMap().putAll(metadataMap);
+      }
       return this;
     }
 
     @Override
     public <T> SnapshotModeBuilder changeTrackingMetadata(
         String column, ChangeTrackingMetadata<T> metadata) {
+      ValidationException.checkNotNull(column, "Column name cannot be null");
+      ValidationException.checkNotNull(metadata, "Change tracking metadata cannot be null");
       properties.getChangeTrackingMetadataMap().put(column, metadata);
       return this;
     }

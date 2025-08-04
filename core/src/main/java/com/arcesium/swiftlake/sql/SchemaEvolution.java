@@ -15,14 +15,17 @@
  */
 package com.arcesium.swiftlake.sql;
 
+import com.arcesium.swiftlake.common.DateTimeUtil;
 import com.arcesium.swiftlake.common.ParquetUtil;
 import com.arcesium.swiftlake.common.SwiftLakeException;
 import com.arcesium.swiftlake.common.ValidationException;
 import com.arcesium.swiftlake.expressions.Expressions;
 import com.arcesium.swiftlake.io.SwiftLakeFileIO;
 import java.sql.Timestamp;
-import java.time.format.DateTimeFormatter;
-import java.time.temporal.TemporalAccessor;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -730,24 +733,26 @@ public class SchemaEvolution {
     } else if (value instanceof String stringValue) {
       return shouldQuoteStrings ? ("'" + stringValue.replace("'", "''") + "'") : stringValue;
     } else if (typeID == Type.TypeID.DATE) {
-      DateTimeFormatter dtf = DateTimeFormatter.ISO_LOCAL_DATE;
-      String stringValue = dtf.format((TemporalAccessor) value);
+      ValidationException.check(value instanceof LocalDate, "Invalid date value %s", value);
+      String stringValue = DateTimeUtil.formatLocalDate((LocalDate) value);
       return shouldQuoteStrings ? ("'" + stringValue + "'") : stringValue;
     } else if (typeID == Type.TypeID.TIME) {
-      DateTimeFormatter dtf = DateTimeFormatter.ISO_LOCAL_TIME;
-      String stringValue = dtf.format((TemporalAccessor) value);
+      ValidationException.check(value instanceof LocalTime, "Invalid time value %s", value);
+      String stringValue = DateTimeUtil.formatLocalTimeWithMicros((LocalTime) value);
       return shouldQuoteStrings ? ("'" + stringValue + "'") : stringValue;
     } else if (typeID == Type.TypeID.TIMESTAMP) {
       if (((Types.TimestampType) type).shouldAdjustToUTC()) {
-        DateTimeFormatter dtf = DateTimeFormatter.ISO_OFFSET_DATE_TIME;
-        String stringValue = dtf.format((TemporalAccessor) value);
+        ValidationException.check(
+            value instanceof OffsetDateTime, "Invalid timestamptz value %s", value);
+        String stringValue = DateTimeUtil.formatOffsetDateTimeWithMicros((OffsetDateTime) value);
         return shouldQuoteStrings ? ("'" + stringValue + "'") : stringValue;
       } else {
         if (value instanceof Timestamp) {
           value = ((Timestamp) value).toLocalDateTime();
         }
-        DateTimeFormatter dtf = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
-        String stringValue = dtf.format((TemporalAccessor) value);
+        ValidationException.check(
+            value instanceof LocalDateTime, "Invalid timestamp value %s", value);
+        String stringValue = DateTimeUtil.formatLocalDateTimeWithMicros((LocalDateTime) value);
         return shouldQuoteStrings ? ("'" + stringValue + "'") : stringValue;
       }
     } else if (typeID == Type.TypeID.FLOAT && value instanceof Float floatValue) {
@@ -826,5 +831,20 @@ public class SchemaEvolution {
   private Types.ListType copyListTypeForComparison(Types.ListType listType) {
     return Types.ListType.ofOptional(
         listType.elementId(), createTypeForComparison(listType.elementType()));
+  }
+
+  /**
+   * Escapes a column name for safe SQL use. This method quotes the column name with double quotes
+   * and escapes any embedded double quotes.
+   *
+   * @param columnName The column name to escape
+   * @return The escaped and quoted column name
+   */
+  public String escapeColumnName(String columnName) {
+    ValidationException.checkNotNull(columnName, "Column name cannot be null");
+    // Replace any double quotes with escaped double quotes
+    String escaped = columnName.replace("\"", "\"\"");
+    // Wrap with double quotes
+    return "\"" + escaped + "\"";
   }
 }

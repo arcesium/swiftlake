@@ -34,6 +34,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -99,26 +100,56 @@ public class SCD2MergeBasicIntegrationTest {
     swiftLakeEngine.getCatalog().createTable(tableId, schema, partitionSpec);
     String tableName = tableId.toString();
 
-    // Insert initial data
-    String currentFlagColumn = null;
-    if (!mergeInputList.isEmpty()) {
-      currentFlagColumn = mergeInputList.get(0).currentFlagColumn;
+    if (initialData != null) {
+      // Insert initial data
+      String currentFlagColumn = null;
+      if (!mergeInputList.isEmpty()) {
+        currentFlagColumn = mergeInputList.get(0).currentFlagColumn;
+      }
+      SCD2MergeIntegrationTestUtil.insertDataIntoSCD2Table(
+          swiftLakeEngine,
+          tableName,
+          schema,
+          initialData,
+          "2025-01-01T00:00:00",
+          currentFlagColumn);
     }
-    SCD2MergeIntegrationTestUtil.insertDataIntoSCD2Table(
-        swiftLakeEngine, tableName, schema, initialData, "2025-01-01T00:00:00", currentFlagColumn);
-    LocalDateTime initialEffectiveTimestamp = LocalDateTime.parse("2025-01-01T00:00:00");
 
     for (int i = 0; i < mergeInputList.size(); i++) {
+      SCD2MergeInput mergeInput = mergeInputList.get(i);
       if (evolveSchema != null && evolveSchema.size() > i && evolveSchema.get(i) != null) {
         evolveSchema.get(i).accept(swiftLakeEngine.getTable(tableName));
         schema = swiftLakeEngine.getTable(tableName).schema();
       }
-      SCD2MergeInput mergeInput = mergeInputList.get(i);
+      LocalDateTime effectiveTimestamp;
+      String effectiveStartColumn;
+      String effectiveEndColumn;
+      boolean generateEffectiveTimestamp;
+      String operationTypeColumn;
+      String deleteOperationValue;
+      if (mergeInput.overrideSCDColumns) {
+        effectiveTimestamp =
+            mergeInput.effectiveTimestamp == null
+                ? null
+                : LocalDateTime.parse(mergeInput.effectiveTimestamp);
+        effectiveStartColumn = mergeInput.effectiveStartColumn;
+        effectiveEndColumn = mergeInput.effectiveEndColumn;
+        generateEffectiveTimestamp = mergeInput.generateEffectiveTimestamp;
+        operationTypeColumn = mergeInput.operationTypeColumn;
+        deleteOperationValue = mergeInput.deleteOperationValue;
+      } else {
+        LocalDateTime initialEffectiveTimestamp = LocalDateTime.parse("2025-01-01T00:00:00");
+        effectiveTimestamp = initialEffectiveTimestamp.plusDays(i + 1);
+        effectiveStartColumn = "effective_start";
+        effectiveEndColumn = "effective_end";
+        generateEffectiveTimestamp = false;
+        operationTypeColumn = "operation_type";
+        deleteOperationValue = "D";
+      }
       String sourceSql =
           mergeInput.isSnapshot
               ? TestUtil.createSnapshotSql(mergeInput.inputData, schema)
-              : TestUtil.createChangeSql(mergeInput.inputData, schema);
-      LocalDateTime effectiveTimestamp = initialEffectiveTimestamp.plusDays(i + 1);
+              : TestUtil.createChangeSql(mergeInput.inputData, schema, operationTypeColumn);
       Runnable mergeFunc =
           () ->
               SCD2MergeIntegrationTestUtil.performSCD2Merge(
@@ -131,7 +162,12 @@ public class SCD2MergeBasicIntegrationTest {
                   effectiveTimestamp,
                   mergeInput.changeTrackingColumns,
                   mergeInput.changeTrackingMetadata,
-                  mergeInput.currentFlagColumn);
+                  mergeInput.currentFlagColumn,
+                  effectiveStartColumn,
+                  effectiveEndColumn,
+                  generateEffectiveTimestamp,
+                  operationTypeColumn,
+                  deleteOperationValue);
       if (errors != null && errors.size() > i) {
         var throwableAssert = assertThatThrownBy(() -> mergeFunc.run());
         var error = errors.get(i);
@@ -147,49 +183,62 @@ public class SCD2MergeBasicIntegrationTest {
     }
 
     // Verify results
-    List<Map<String, Object>> actualData = TestUtil.getRecordsFromTable(swiftLakeEngine, tableName);
-    expectedData = SCD2MergeIntegrationTestUtil.addNullEffectiveEnd(expectedData);
-    assertThat(actualData)
-        .usingRecursiveFieldByFieldElementComparator()
-        .containsExactlyInAnyOrderElementsOf(expectedData);
+    if (expectedData != null) {
+      List<Map<String, Object>> actualData =
+          TestUtil.getRecordsFromTable(swiftLakeEngine, tableName);
+      expectedData = SCD2MergeIntegrationTestUtil.addNullEffectiveEnd(expectedData);
+      assertThat(actualData)
+          .usingRecursiveFieldByFieldElementComparator()
+          .containsExactlyInAnyOrderElementsOf(expectedData);
+    }
     TestUtil.dropIcebergTable(swiftLakeEngine, tableName);
   }
 
   private static Stream<Arguments> provideTestCases() {
-    return Stream.of(
-        simpleSchemaTestCase(true),
-        simpleSchemaTestCase(false),
-        complexTypesTestCase(true),
-        complexTypesTestCase(false),
-        noChangesTestCase(true),
-        noChangesTestCase(false),
-        allInsertsTestCase(true),
-        allInsertsTestCase(false),
-        allDeletesTestCase(true),
-        allDeletesTestCase(false),
-        emptySourceTestCase(),
-        multipleOperationsTestCase(true),
-        multipleOperationsTestCase(false),
-        nullValuesTestCase(true),
-        nullValuesTestCase(false),
-        changeTrackingColumnsTestCase(true),
-        changeTrackingColumnsTestCase(false),
-        currentFlagColumnTestCase(true),
-        currentFlagColumnTestCase(false),
-        longHistoryChainTestCase(true),
-        longHistoryChainTestCase(false),
-        extremeValuesTestCase(true),
-        extremeValuesTestCase(false),
-        unicodeAndSpecialCharactersTestCase(true),
-        unicodeAndSpecialCharactersTestCase(false),
-        timeZoneHandlingTestCase(true),
-        timeZoneHandlingTestCase(false),
-        schemaEvolutionTestCase(true),
-        schemaEvolutionTestCase(false),
-        multiColumnKeyTestCase(true),
-        multiColumnKeyTestCase(false),
-        errorHandlingTestCase(true),
-        errorHandlingTestCase(false));
+    Stream<Arguments> argumentsStream =
+        Stream.of(
+            simpleSchemaTestCase(true),
+            simpleSchemaTestCase(false),
+            complexTypesTestCase(true),
+            complexTypesTestCase(false),
+            noChangesTestCase(true),
+            noChangesTestCase(false),
+            allInsertsTestCase(true),
+            allInsertsTestCase(false),
+            allDeletesTestCase(true),
+            allDeletesTestCase(false),
+            emptySourceTestCase(),
+            multipleOperationsTestCase(true),
+            multipleOperationsTestCase(false),
+            nullValuesTestCase(true),
+            nullValuesTestCase(false),
+            changeTrackingColumnsTestCase(true),
+            changeTrackingColumnsTestCase(false),
+            currentFlagColumnTestCase(true),
+            currentFlagColumnTestCase(false),
+            longHistoryChainTestCase(true),
+            longHistoryChainTestCase(false),
+            extremeValuesTestCase(true),
+            extremeValuesTestCase(false),
+            unicodeAndSpecialCharactersTestCase(true),
+            unicodeAndSpecialCharactersTestCase(false),
+            timeZoneHandlingTestCase(true),
+            timeZoneHandlingTestCase(false),
+            schemaEvolutionTestCase(true),
+            schemaEvolutionTestCase(false),
+            multiColumnKeyTestCase(true),
+            multiColumnKeyTestCase(false),
+            errorHandlingTestCase(true),
+            errorHandlingTestCase(false));
+
+    List<Stream<Arguments>> streamList = new ArrayList<>();
+    streamList.add(argumentsStream);
+    streamList.add(provideKeyAndChangeTrackingColumnValidationTestCases(true));
+    streamList.add(provideKeyAndChangeTrackingColumnValidationTestCases(false));
+    streamList.add(provideSCD2ColumnValidationTestCases(true));
+    streamList.add(provideSCD2ColumnValidationTestCases(false));
+    streamList.add(provideSpecialCharsInOperationTypeTestCases());
+    return streamList.stream().reduce(Stream.empty(), Stream::concat);
   }
 
   private static Arguments simpleSchemaTestCase(boolean isSnapshotMerge) {
@@ -1529,6 +1578,43 @@ public class SCD2MergeBasicIntegrationTest {
         Pair.of(
             ValidationException.class,
             "Merge operation matched a single row from target table data with multiple rows of the source data"));
+
+    // Duplicate records
+    if (isSnapshotMerge) {
+      inputData =
+          Arrays.asList(
+              Map.of("id", 2L, "name", "Jane", "value", 200.0),
+              Map.of("id", 2L, "name", "Jane", "value", 200.0));
+    } else {
+      inputData =
+          Arrays.asList(
+              Map.of("id", 2L, "name", "Jane", "value", 200.0, "operation_type", "U"),
+              Map.of("id", 2L, "name", "Jane", "value", 200.0, "operation_type", "D"));
+    }
+    mergeInputs.add(new SCD2MergeInput(inputData, tableFilter, keyColumns, isSnapshotMerge));
+    errors.add(
+        Pair.of(
+            ValidationException.class,
+            "Merge operation matched a single row from target table data with multiple rows of the source data"));
+
+    // Duplicate records
+    if (isSnapshotMerge) {
+      inputData =
+          Arrays.asList(
+              Map.of("id", 2L, "name", "Jane", "value", 200.0),
+              Map.of("id", 2L, "name", "Jane", "value", 200.0));
+    } else {
+      inputData =
+          Arrays.asList(
+              Map.of("id", 2L, "name", "Jane", "value", 200.0, "operation_type", "U"),
+              Map.of("id", 2L, "name", "Jane", "value", 200.0, "operation_type", "U"));
+    }
+    mergeInputs.add(new SCD2MergeInput(inputData, tableFilter, keyColumns, isSnapshotMerge));
+    errors.add(
+        Pair.of(
+            ValidationException.class,
+            "Merge operation matched a single row from target table data with multiple rows of the source data"));
+
     if (isSnapshotMerge) {
       inputData =
           Arrays.asList(
@@ -1555,7 +1641,7 @@ public class SCD2MergeBasicIntegrationTest {
                 "effective_start",
                 LocalDateTime.parse("2025-01-01T00:00:00"),
                 "effective_end",
-                LocalDateTime.parse("2025-01-05T00:00:00")),
+                LocalDateTime.parse("2025-01-07T00:00:00")),
             Map.of(
                 "id",
                 2L,
@@ -1573,7 +1659,7 @@ public class SCD2MergeBasicIntegrationTest {
                 "value",
                 300.0,
                 "effective_start",
-                LocalDateTime.parse("2025-01-05T00:00:00")),
+                LocalDateTime.parse("2025-01-07T00:00:00")),
             Map.of(
                 "id",
                 3L,
@@ -1582,7 +1668,7 @@ public class SCD2MergeBasicIntegrationTest {
                 "value",
                 400.0,
                 "effective_start",
-                LocalDateTime.parse("2025-01-05T00:00:00")));
+                LocalDateTime.parse("2025-01-07T00:00:00")));
 
     return Arguments.of(
         "error_handling" + (isSnapshotMerge ? "_snapshot_mode" : "_changes_mode"),
@@ -1593,6 +1679,1165 @@ public class SCD2MergeBasicIntegrationTest {
         expectedData,
         null,
         errors);
+  }
+
+  private static Stream<Arguments> provideKeyAndChangeTrackingColumnValidationTestCases(
+      boolean isSnapshotMode) {
+    Schema schema =
+        new Schema(
+            Types.NestedField.required(1, "id", Types.LongType.get()),
+            Types.NestedField.required(2, "name", Types.StringType.get()),
+            Types.NestedField.required(3, "value", Types.DoubleType.get()),
+            Types.NestedField.required(4, "effective_start", Types.TimestampType.withoutZone()),
+            Types.NestedField.optional(5, "effective_end", Types.TimestampType.withoutZone()),
+            Types.NestedField.optional(6, "is_current", Types.BooleanType.get()));
+
+    PartitionSpec partitionSpec = PartitionSpec.unpartitioned();
+
+    // Initial data
+    List<Map<String, Object>> initialData =
+        Arrays.asList(
+            Map.of("id", 1L, "name", "John", "value", 100.0),
+            Map.of("id", 2L, "name", "Jane", "value", 200.0));
+
+    List<Map<String, Object>> validInputData = null;
+    if (isSnapshotMode) {
+      validInputData =
+          Arrays.asList(
+              Map.of("id", 1L, "name", "John Updated", "value", 101.0),
+              Map.of("id", 2L, "name", "Jane", "value", 200.0));
+    } else {
+      validInputData =
+          Arrays.asList(
+              Map.of("id", 1L, "name", "John Updated", "value", 101.0, "operation_type", "U"));
+    }
+
+    return Stream.of(
+        // Null key columns
+        Arguments.of(
+            "empty_key_columns",
+            schema,
+            partitionSpec,
+            null,
+            Collections.singletonList(
+                new SCD2MergeInput(
+                    validInputData,
+                    "id IS NOT NULL",
+                    null,
+                    "is_current",
+                    null,
+                    null,
+                    isSnapshotMode)),
+            null,
+            null,
+            Collections.singletonList(
+                Pair.of(ValidationException.class, "Key columns cannot be null or empty"))),
+        // Empty key columns
+        Arguments.of(
+            "empty_key_columns",
+            schema,
+            partitionSpec,
+            null,
+            Collections.singletonList(
+                new SCD2MergeInput(
+                    validInputData,
+                    "id IS NOT NULL",
+                    Collections.emptyList(), // empty key columns
+                    "is_current",
+                    null,
+                    null,
+                    isSnapshotMode)),
+            null,
+            null,
+            Collections.singletonList(
+                Pair.of(ValidationException.class, "Key columns cannot be null or empty"))),
+
+        // Invalid key column (not in schema)
+        Arguments.of(
+            "invalid_key_column",
+            schema,
+            partitionSpec,
+            null,
+            Collections.singletonList(
+                new SCD2MergeInput(
+                    validInputData,
+                    "id IS NOT NULL",
+                    Arrays.asList("id", "non_existent_column"), // invalid key column
+                    "is_current",
+                    null,
+                    null,
+                    isSnapshotMode)),
+            null,
+            null,
+            Collections.singletonList(
+                Pair.of(ValidationException.class, "Invalid key column non_existent_column"))),
+
+        // Invalid change tracking column (not in schema)
+        Arguments.of(
+            "invalid_change_tracking_column",
+            schema,
+            partitionSpec,
+            null,
+            Collections.singletonList(
+                new SCD2MergeInput(
+                    validInputData,
+                    "id IS NOT NULL",
+                    Arrays.asList("id"),
+                    "is_current",
+                    Arrays.asList("value", "non_existent_column"), // invalid change tracking column
+                    null,
+                    isSnapshotMode)),
+            null,
+            null,
+            Collections.singletonList(
+                Pair.of(
+                    ValidationException.class,
+                    "Invalid change tracking column non_existent_column"))),
+
+        // Column used as both key and change tracking
+        Arguments.of(
+            "column_both_key_and_change_tracking",
+            schema,
+            partitionSpec,
+            null,
+            Collections.singletonList(
+                new SCD2MergeInput(
+                    validInputData,
+                    "id IS NOT NULL",
+                    Arrays.asList("id", "value"), // value is both key and change tracking
+                    "is_current",
+                    Arrays.asList("name", "value"),
+                    null,
+                    isSnapshotMode)),
+            null,
+            null,
+            Collections.singletonList(
+                Pair.of(
+                    ValidationException.class,
+                    "Column 'value' cannot be both a key column and a change tracking column"))),
+
+        // Change tracking metadata for non-change tracking column
+        Arguments.of(
+            "metadata_for_invalid_change_tracking_column",
+            schema,
+            partitionSpec,
+            initialData,
+            Collections.singletonList(
+                new SCD2MergeInput(
+                    null,
+                    "id IS NOT NULL",
+                    Arrays.asList("id"),
+                    "is_current",
+                    Arrays.asList("value"), // change tracking columns only includes value
+                    new HashMap<String, ChangeTrackingMetadata<?>>() {
+                      {
+                        put("value", new ChangeTrackingMetadata<>(0.1, null));
+                        put(
+                            "name",
+                            new ChangeTrackingMetadata<>(
+                                0.2, null)); // not in change tracking columns
+                      }
+                    },
+                    isSnapshotMode)),
+            null,
+            null,
+            Collections.singletonList(
+                Pair.of(ValidationException.class, "Invalid change tracking column name"))),
+
+        // Both max delta and null replacement provided
+        Arguments.of(
+            "both_max_delta_and_null_replacement",
+            schema,
+            partitionSpec,
+            null,
+            Collections.singletonList(
+                new SCD2MergeInput(
+                    validInputData,
+                    "id IS NOT NULL",
+                    Arrays.asList("id"),
+                    "is_current",
+                    Arrays.asList("value"),
+                    new HashMap<String, ChangeTrackingMetadata<?>>() {
+                      {
+                        put(
+                            "value",
+                            new ChangeTrackingMetadata<>(0.1, 0.0)); // both values provided
+                      }
+                    },
+                    isSnapshotMode)),
+            null,
+            null,
+            Collections.singletonList(
+                Pair.of(
+                    ValidationException.class,
+                    "Provide either max delta value or null value for the change tracking column value"))),
+
+        // Valid configuration with change tracking
+        Arguments.of(
+            "valid_change_tracking_configuration",
+            schema,
+            partitionSpec,
+            initialData,
+            Collections.singletonList(
+                new SCD2MergeInput(
+                    validInputData,
+                    "id IS NOT NULL",
+                    Arrays.asList("id"),
+                    "is_current",
+                    Arrays.asList("value", "name"),
+                    new HashMap<String, ChangeTrackingMetadata<?>>() {
+                      {
+                        put("value", new ChangeTrackingMetadata<>(0.1, null));
+                      }
+                    },
+                    isSnapshotMode)),
+            Arrays.asList(
+                Map.of(
+                    "id",
+                    1L,
+                    "name",
+                    "John Updated",
+                    "value",
+                    101.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-02T00:00:00"),
+                    "is_current",
+                    true),
+                Map.of(
+                    "id",
+                    1L,
+                    "name",
+                    "John",
+                    "value",
+                    100.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-01T00:00:00"),
+                    "effective_end",
+                    LocalDateTime.parse("2025-01-02T00:00:00"),
+                    "is_current",
+                    false),
+                Map.of(
+                    "id",
+                    2L,
+                    "name",
+                    "Jane",
+                    "value",
+                    200.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-01T00:00:00"),
+                    "is_current",
+                    true)),
+            null,
+            null // no validation errors
+            ));
+  }
+
+  private static Stream<Arguments> provideSCD2ColumnValidationTestCases(boolean isSnapshotMode) {
+    // Create schema with various column types including timestamp with/without zone
+    Schema schema =
+        new Schema(
+            Types.NestedField.required(1, "id", Types.LongType.get()),
+            Types.NestedField.required(2, "name", Types.StringType.get()),
+            Types.NestedField.required(3, "value", Types.DoubleType.get()),
+            Types.NestedField.required(4, "effective_start", Types.TimestampType.withoutZone()),
+            Types.NestedField.optional(5, "effective_end", Types.TimestampType.withoutZone()),
+            Types.NestedField.optional(6, "tz_timestamp", Types.TimestampType.withZone()),
+            Types.NestedField.optional(7, "is_current", Types.BooleanType.get()),
+            Types.NestedField.optional(8, "not_boolean", Types.StringType.get()));
+
+    PartitionSpec partitionSpec = PartitionSpec.unpartitioned();
+
+    List<Map<String, Object>> validInputData =
+        Arrays.asList(
+            Map.of("id", 1L, "name", "John Updated", "value", 101.0, "operation_type", "U"));
+
+    Stream<Arguments> argumentsStream =
+        Stream.of(
+            // Missing effective timestamp
+            Arguments.of(
+                "missing_effective_timestamp",
+                schema,
+                partitionSpec,
+                null,
+                Collections.singletonList(
+                    createSCD2Input(
+                        validInputData,
+                        "id IS NOT NULL",
+                        Arrays.asList("id"),
+                        null,
+                        null, // null effective timestamp
+                        "effective_start",
+                        "effective_end",
+                        false,
+                        isSnapshotMode)),
+                null,
+                null,
+                Collections.singletonList(
+                    Pair.of(ValidationException.class, "Effective timestamp is mandatory"))),
+
+            // Missing effective start column
+            Arguments.of(
+                "missing_effective_start_column",
+                schema,
+                partitionSpec,
+                null,
+                Collections.singletonList(
+                    createSCD2Input(
+                        validInputData,
+                        "id IS NOT NULL",
+                        Arrays.asList("id"),
+                        null,
+                        "2025-01-02T00:00:00",
+                        null, // null start column
+                        "effective_end",
+                        false,
+                        isSnapshotMode)),
+                null,
+                null,
+                Collections.singletonList(
+                    Pair.of(ValidationException.class, "Effective start column is mandatory"))),
+
+            // Non-existent effective start column
+            Arguments.of(
+                "nonexistent_effective_start_column",
+                schema,
+                partitionSpec,
+                null,
+                Collections.singletonList(
+                    createSCD2Input(
+                        validInputData,
+                        "id IS NOT NULL",
+                        Arrays.asList("id"),
+                        null,
+                        "2025-01-02T00:00:00",
+                        "non_existent_column", // non-existent start column
+                        "effective_start",
+                        false,
+                        isSnapshotMode)),
+                null,
+                null,
+                Collections.singletonList(Pair.of(ValidationException.class, "does not exist"))),
+
+            // Effective start column has timezone
+            Arguments.of(
+                "effective_start_column_with_timezone",
+                schema,
+                partitionSpec,
+                null,
+                Collections.singletonList(
+                    createSCD2Input(
+                        validInputData,
+                        "id IS NOT NULL",
+                        Arrays.asList("id"),
+                        null,
+                        "2025-01-02T00:00:00",
+                        "tz_timestamp", // timestamp with zone
+                        "effective_start",
+                        false,
+                        isSnapshotMode)),
+                null,
+                null,
+                Collections.singletonList(
+                    Pair.of(
+                        ValidationException.class, "must be a timestamp without timezone type"))),
+
+            // Missing effective end column
+            Arguments.of(
+                "missing_effective_end_column",
+                schema,
+                partitionSpec,
+                null,
+                Collections.singletonList(
+                    createSCD2Input(
+                        validInputData,
+                        "id IS NOT NULL",
+                        Arrays.asList("id"),
+                        null,
+                        "2025-01-02T00:00:00",
+                        "effective_start",
+                        null, // null end column
+                        false,
+                        isSnapshotMode)),
+                null,
+                null,
+                Collections.singletonList(
+                    Pair.of(ValidationException.class, "Effective end column is mandatory"))),
+
+            // Non-existent effective start column
+            Arguments.of(
+                "nonexistent_effective_start_column",
+                schema,
+                partitionSpec,
+                null,
+                Collections.singletonList(
+                    createSCD2Input(
+                        validInputData,
+                        "id IS NOT NULL",
+                        Arrays.asList("id"),
+                        null,
+                        "2025-01-02T00:00:00",
+                        "effective_start",
+                        "non_existent_column", // non-existent end column
+                        false,
+                        isSnapshotMode)),
+                null,
+                null,
+                Collections.singletonList(Pair.of(ValidationException.class, "does not exist"))),
+
+            // Effective start column has timezone
+            Arguments.of(
+                "effective_start_column_with_timezone",
+                schema,
+                partitionSpec,
+                null,
+                Collections.singletonList(
+                    createSCD2Input(
+                        validInputData,
+                        "id IS NOT NULL",
+                        Arrays.asList("id"),
+                        null,
+                        "2025-01-02T00:00:00",
+                        "effective_start",
+                        "tz_timestamp", // timestamp with zone
+                        false,
+                        isSnapshotMode)),
+                null,
+                null,
+                Collections.singletonList(
+                    Pair.of(
+                        ValidationException.class, "must be a timestamp without timezone type"))),
+
+            // Same column for start and end
+            Arguments.of(
+                "same_column_for_start_and_end",
+                schema,
+                partitionSpec,
+                null,
+                Collections.singletonList(
+                    createSCD2Input(
+                        validInputData,
+                        "id IS NOT NULL",
+                        Arrays.asList("id"),
+                        null,
+                        "2025-01-02T00:00:00",
+                        "effective_start",
+                        "effective_start", // same as start
+                        false,
+                        isSnapshotMode)),
+                null,
+                null,
+                Collections.singletonList(
+                    Pair.of(ValidationException.class, "cannot be the same"))),
+
+            // Current flag column same as effective start
+            Arguments.of(
+                "current_flag_same_as_effective_start",
+                schema,
+                partitionSpec,
+                null,
+                Collections.singletonList(
+                    createSCD2Input(
+                        validInputData,
+                        "id IS NOT NULL",
+                        Arrays.asList("id"),
+                        "effective_start", // same as start
+                        "2025-01-02T00:00:00",
+                        "effective_start",
+                        "effective_end",
+                        false,
+                        isSnapshotMode)),
+                null,
+                null,
+                Collections.singletonList(
+                    Pair.of(
+                        ValidationException.class,
+                        "Current flag column cannot be the same as effective start or end column"))),
+
+            // Current flag column same as effective end
+            Arguments.of(
+                "current_flag_same_as_effective_start",
+                schema,
+                partitionSpec,
+                null,
+                Collections.singletonList(
+                    createSCD2Input(
+                        validInputData,
+                        "id IS NOT NULL",
+                        Arrays.asList("id"),
+                        "effective_start", // same as start
+                        "2025-01-02T00:00:00",
+                        "effective_start",
+                        "effective_end",
+                        false,
+                        isSnapshotMode)),
+                null,
+                null,
+                Collections.singletonList(
+                    Pair.of(
+                        ValidationException.class,
+                        "Current flag column cannot be the same as effective start or end column"))),
+
+            // Non-existent Current flag column
+            Arguments.of(
+                "current_flag_not_boolean",
+                schema,
+                partitionSpec,
+                null,
+                Collections.singletonList(
+                    createSCD2Input(
+                        validInputData,
+                        "id IS NOT NULL",
+                        Arrays.asList("id"),
+                        "non_existent_column",
+                        "2025-01-02T00:00:00",
+                        "effective_start",
+                        "effective_end",
+                        false,
+                        isSnapshotMode)),
+                null,
+                null,
+                Collections.singletonList(Pair.of(ValidationException.class, "does not exist"))),
+
+            // Current flag column not a boolean
+            Arguments.of(
+                "current_flag_not_boolean",
+                schema,
+                partitionSpec,
+                null,
+                Collections.singletonList(
+                    createSCD2Input(
+                        validInputData,
+                        "id IS NOT NULL",
+                        Arrays.asList("id"),
+                        "not_boolean",
+                        "2025-01-02T00:00:00",
+                        "effective_start",
+                        "effective_end",
+                        false,
+                        isSnapshotMode)),
+                null,
+                null,
+                Collections.singletonList(
+                    Pair.of(ValidationException.class, "must be a boolean type"))));
+
+    if (isSnapshotMode) {
+      return argumentsStream;
+    } else {
+      Stream<Arguments> argumentsStreamForChangesMode =
+          Stream.of(
+              // Missing operation type in changes mode
+              Arguments.of(
+                  "missing_operation_type_in_changes_mode",
+                  schema,
+                  partitionSpec,
+                  null,
+                  Collections.singletonList(
+                      createSCD2InputWithChangesMode(
+                          validInputData,
+                          "id IS NOT NULL",
+                          Arrays.asList("id"),
+                          null,
+                          "2025-01-02T00:00:00",
+                          "effective_start",
+                          "effective_end",
+                          false,
+                          false,
+                          null, // null operation type
+                          "D")),
+                  null,
+                  null,
+                  Collections.singletonList(
+                      Pair.of(ValidationException.class, "Operation type column is mandatory"))),
+
+              // Missing delete value in changes mode
+              Arguments.of(
+                  "missing_delete_value_in_changes_mode",
+                  schema,
+                  partitionSpec,
+                  null,
+                  Collections.singletonList(
+                      createSCD2InputWithChangesMode(
+                          validInputData,
+                          "id IS NOT NULL",
+                          Arrays.asList("id"),
+                          null,
+                          "2025-01-02T00:00:00",
+                          "effective_start",
+                          "effective_end",
+                          false,
+                          false,
+                          "operation_type",
+                          null // null delete value
+                          )),
+                  null,
+                  null,
+                  Collections.singletonList(
+                      Pair.of(ValidationException.class, "Delete operation value is mandatory"))));
+      return Stream.concat(argumentsStream, argumentsStreamForChangesMode);
+    }
+  }
+
+  private static Stream<Arguments> provideSpecialCharsInOperationTypeTestCases() {
+    Schema schema =
+        new Schema(
+            Types.NestedField.required(1, "id", Types.LongType.get()),
+            Types.NestedField.required(2, "name", Types.StringType.get()),
+            Types.NestedField.required(3, "value", Types.DoubleType.get()),
+            Types.NestedField.required(4, "effective_start", Types.TimestampType.withoutZone()),
+            Types.NestedField.optional(5, "effective_end", Types.TimestampType.withoutZone()));
+
+    PartitionSpec partitionSpec = PartitionSpec.unpartitioned();
+
+    // Initial data
+    List<Map<String, Object>> initialData =
+        Arrays.asList(
+            Map.of("id", 1L, "name", "John", "value", 100.0),
+            Map.of("id", 2L, "name", "Jane", "value", 200.0),
+            Map.of("id", 3L, "name", "Bob", "value", 300.0),
+            Map.of("id", 4L, "name", "Alice", "value", 400.0));
+
+    return Stream.of(
+        // Special characters in operation type column
+        Arguments.of(
+            "special_chars_in_op_type_column",
+            schema,
+            partitionSpec,
+            initialData,
+            Collections.singletonList(
+                createSCD2InputWithChangesMode(
+                    Arrays.asList(
+                        new HashMap<String, Object>() {
+                          {
+                            put("id", 1L);
+                            put("name", "John Updated");
+                            put("value", 101.0);
+                            put("op!@#$%^&*()_+", "U"); // Update with special chars op column
+                          }
+                        },
+                        new HashMap<String, Object>() {
+                          {
+                            put("id", 2L);
+                            put("name", "Jane Updated");
+                            put("value", 202.0);
+                            put("op!@#$%^&*()_+", "D"); // Delete with special chars op column
+                          }
+                        }),
+                    "id IS NOT NULL",
+                    Arrays.asList("id"),
+                    null,
+                    "2025-01-02T00:00:00",
+                    "effective_start",
+                    "effective_end",
+                    false,
+                    false,
+                    "op!@#$%^&*()_+", // Operation column with special chars
+                    "D")),
+            Arrays.asList(
+                Map.of(
+                    "id",
+                    1L,
+                    "name",
+                    "John Updated",
+                    "value",
+                    101.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-02T00:00:00")),
+                Map.of(
+                    "id",
+                    1L,
+                    "name",
+                    "John",
+                    "value",
+                    100.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-01T00:00:00"),
+                    "effective_end",
+                    LocalDateTime.parse("2025-01-02T00:00:00")),
+                Map.of(
+                    "id",
+                    2L,
+                    "name",
+                    "Jane",
+                    "value",
+                    200.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-01T00:00:00"),
+                    "effective_end",
+                    LocalDateTime.parse("2025-01-02T00:00:00")),
+                Map.of(
+                    "id",
+                    3L,
+                    "name",
+                    "Bob",
+                    "value",
+                    300.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-01T00:00:00")),
+                Map.of(
+                    "id",
+                    4L,
+                    "name",
+                    "Alice",
+                    "value",
+                    400.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-01T00:00:00"))),
+            null,
+            null // no validation errors expected
+            ),
+
+        // Spaces in operation type column
+        Arguments.of(
+            "spaces_in_op_type_column",
+            schema,
+            partitionSpec,
+            initialData,
+            Collections.singletonList(
+                createSCD2InputWithChangesMode(
+                    Arrays.asList(
+                        new HashMap<String, Object>() {
+                          {
+                            put("id", 1L);
+                            put("name", "John Updated");
+                            put("value", 101.0);
+                            put(
+                                "operation type with spaces",
+                                "U"); // Update with spaces in op column
+                          }
+                        },
+                        new HashMap<String, Object>() {
+                          {
+                            put("id", 3L);
+                            put("name", "Bob");
+                            put("value", 300.0);
+                            put(
+                                "operation type with spaces",
+                                "D"); // Delete with spaces in op column
+                          }
+                        }),
+                    "id IS NOT NULL",
+                    Arrays.asList("id"),
+                    null,
+                    "2025-01-02T00:00:00",
+                    "effective_start",
+                    "effective_end",
+                    false,
+                    false,
+                    "operation type with spaces", // Operation column with spaces
+                    "D")),
+            Arrays.asList(
+                Map.of(
+                    "id",
+                    1L,
+                    "name",
+                    "John Updated",
+                    "value",
+                    101.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-02T00:00:00")),
+                Map.of(
+                    "id",
+                    1L,
+                    "name",
+                    "John",
+                    "value",
+                    100.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-01T00:00:00"),
+                    "effective_end",
+                    LocalDateTime.parse("2025-01-02T00:00:00")),
+                Map.of(
+                    "id",
+                    2L,
+                    "name",
+                    "Jane",
+                    "value",
+                    200.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-01T00:00:00")),
+                Map.of(
+                    "id",
+                    3L,
+                    "name",
+                    "Bob",
+                    "value",
+                    300.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-01T00:00:00"),
+                    "effective_end",
+                    LocalDateTime.parse("2025-01-02T00:00:00")),
+                Map.of(
+                    "id",
+                    4L,
+                    "name",
+                    "Alice",
+                    "value",
+                    400.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-01T00:00:00"))),
+            null,
+            null // no validation errors expected
+            ),
+
+        // Quotes in operation type column
+        Arguments.of(
+            "quotes_in_op_type_column",
+            schema,
+            partitionSpec,
+            initialData,
+            Collections.singletonList(
+                createSCD2InputWithChangesMode(
+                    Arrays.asList(
+                        new HashMap<String, Object>() {
+                          {
+                            put("id", 1L);
+                            put("name", "John Updated");
+                            put("value", 101.0);
+                            put("op\"quote'mixed", "U"); // Update with quotes in op column
+                          }
+                        },
+                        new HashMap<String, Object>() {
+                          {
+                            put("id", 4L);
+                            put("name", "Alice");
+                            put("value", 400.0);
+                            put("op\"quote'mixed", "D"); // Delete with quotes in op column
+                          }
+                        }),
+                    "id IS NOT NULL",
+                    Arrays.asList("id"),
+                    null,
+                    "2025-01-02T00:00:00",
+                    "effective_start",
+                    "effective_end",
+                    false,
+                    false,
+                    "op\"quote'mixed", // Operation column with mixed quotes
+                    "D")),
+            Arrays.asList(
+                Map.of(
+                    "id",
+                    1L,
+                    "name",
+                    "John Updated",
+                    "value",
+                    101.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-02T00:00:00")),
+                Map.of(
+                    "id",
+                    1L,
+                    "name",
+                    "John",
+                    "value",
+                    100.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-01T00:00:00"),
+                    "effective_end",
+                    LocalDateTime.parse("2025-01-02T00:00:00")),
+                Map.of(
+                    "id",
+                    2L,
+                    "name",
+                    "Jane",
+                    "value",
+                    200.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-01T00:00:00")),
+                Map.of(
+                    "id",
+                    3L,
+                    "name",
+                    "Bob",
+                    "value",
+                    300.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-01T00:00:00")),
+                Map.of(
+                    "id",
+                    4L,
+                    "name",
+                    "Alice",
+                    "value",
+                    400.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-01T00:00:00"),
+                    "effective_end",
+                    LocalDateTime.parse("2025-01-02T00:00:00"))),
+            null,
+            null // no validation errors expected
+            ),
+
+        // Control characters in operation type column
+        Arguments.of(
+            "control_chars_in_op_type_column",
+            schema,
+            partitionSpec,
+            initialData,
+            Collections.singletonList(
+                createSCD2InputWithChangesMode(
+                    Arrays.asList(
+                        new HashMap<String, Object>() {
+                          {
+                            put("id", 1L);
+                            put("name", "John Updated");
+                            put("value", 101.0);
+                            put("op\t\n\r\b\f", "U"); // Update
+                          }
+                        },
+                        new HashMap<String, Object>() {
+                          {
+                            put("id", 4L);
+                            put("name", "Alice");
+                            put("value", 400.0);
+                            put("op\t\n\r\b\f", "D"); // Delete
+                          }
+                        }),
+                    "id IS NOT NULL",
+                    Arrays.asList("id"),
+                    null,
+                    "2025-01-02T00:00:00",
+                    "effective_start",
+                    "effective_end",
+                    false,
+                    false,
+                    "op\t\n\r\b\f", // Operation column with control chars
+                    "D")),
+            Arrays.asList(
+                Map.of(
+                    "id",
+                    1L,
+                    "name",
+                    "John Updated",
+                    "value",
+                    101.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-02T00:00:00")),
+                Map.of(
+                    "id",
+                    1L,
+                    "name",
+                    "John",
+                    "value",
+                    100.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-01T00:00:00"),
+                    "effective_end",
+                    LocalDateTime.parse("2025-01-02T00:00:00")),
+                Map.of(
+                    "id",
+                    2L,
+                    "name",
+                    "Jane",
+                    "value",
+                    200.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-01T00:00:00")),
+                Map.of(
+                    "id",
+                    3L,
+                    "name",
+                    "Bob",
+                    "value",
+                    300.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-01T00:00:00")),
+                Map.of(
+                    "id",
+                    4L,
+                    "name",
+                    "Alice",
+                    "value",
+                    400.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-01T00:00:00"),
+                    "effective_end",
+                    LocalDateTime.parse("2025-01-02T00:00:00"))),
+            null,
+            null // no validation errors expected
+            ),
+
+        // Special characters in delete operation value
+        Arguments.of(
+            "special_chars_in_delete_value",
+            schema,
+            partitionSpec,
+            initialData,
+            Collections.singletonList(
+                createSCD2InputWithChangesMode(
+                    Arrays.asList(
+                        new HashMap<String, Object>() {
+                          {
+                            put("id", 1L);
+                            put("name", "John Updated");
+                            put("value", 101.0);
+                            put("operation_type", "U"); // Update operation
+                          }
+                        },
+                        new HashMap<String, Object>() {
+                          {
+                            put("id", 2L);
+                            put("name", "Jane");
+                            put("value", 200.0);
+                            put(
+                                "operation_type",
+                                "D!@#$%^&*()_+"); // Delete with special chars value
+                          }
+                        }),
+                    "id IS NOT NULL",
+                    Arrays.asList("id"),
+                    null,
+                    "2025-01-02T00:00:00",
+                    "effective_start",
+                    "effective_end",
+                    false,
+                    false,
+                    "operation_type",
+                    "D!@#$%^&*()_+" // Delete value with special chars
+                    )),
+            Arrays.asList(
+                Map.of(
+                    "id",
+                    1L,
+                    "name",
+                    "John Updated",
+                    "value",
+                    101.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-02T00:00:00")),
+                Map.of(
+                    "id",
+                    1L,
+                    "name",
+                    "John",
+                    "value",
+                    100.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-01T00:00:00"),
+                    "effective_end",
+                    LocalDateTime.parse("2025-01-02T00:00:00")),
+                Map.of(
+                    "id",
+                    2L,
+                    "name",
+                    "Jane",
+                    "value",
+                    200.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-01T00:00:00"),
+                    "effective_end",
+                    LocalDateTime.parse("2025-01-02T00:00:00")),
+                Map.of(
+                    "id",
+                    3L,
+                    "name",
+                    "Bob",
+                    "value",
+                    300.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-01T00:00:00")),
+                Map.of(
+                    "id",
+                    4L,
+                    "name",
+                    "Alice",
+                    "value",
+                    400.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-01T00:00:00"))),
+            null,
+            null // no validation errors expected
+            ),
+
+        // Mixed quotes and special chars in delete value
+        Arguments.of(
+            "mixed_chars_in_delete_value",
+            schema,
+            partitionSpec,
+            initialData,
+            Collections.singletonList(
+                createSCD2InputWithChangesMode(
+                    Arrays.asList(
+                        new HashMap<String, Object>() {
+                          {
+                            put("id", 3L);
+                            put("name", "Bob Updated");
+                            put("value", 303.0);
+                            put("operation_type", "U"); // Update operation
+                          }
+                        },
+                        new HashMap<String, Object>() {
+                          {
+                            put("id", 4L);
+                            put("name", "Alice");
+                            put("value", 400.0);
+                            put("operation_type", "D\" \t'Mixed!@#"); // Delete with mixed chars
+                          }
+                        }),
+                    "id IS NOT NULL",
+                    Arrays.asList("id"),
+                    null,
+                    "2025-01-02T00:00:00",
+                    "effective_start",
+                    "effective_end",
+                    false,
+                    false,
+                    "operation_type",
+                    "D\" \t'Mixed!@#" // Complex delete value
+                    )),
+            Arrays.asList(
+                Map.of(
+                    "id",
+                    1L,
+                    "name",
+                    "John",
+                    "value",
+                    100.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-01T00:00:00")),
+                Map.of(
+                    "id",
+                    2L,
+                    "name",
+                    "Jane",
+                    "value",
+                    200.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-01T00:00:00")),
+                Map.of(
+                    "id",
+                    3L,
+                    "name",
+                    "Bob Updated",
+                    "value",
+                    303.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-02T00:00:00")),
+                Map.of(
+                    "id",
+                    3L,
+                    "name",
+                    "Bob",
+                    "value",
+                    300.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-01T00:00:00"),
+                    "effective_end",
+                    LocalDateTime.parse("2025-01-02T00:00:00")),
+                Map.of(
+                    "id",
+                    4L,
+                    "name",
+                    "Alice",
+                    "value",
+                    400.0,
+                    "effective_start",
+                    LocalDateTime.parse("2025-01-01T00:00:00"),
+                    "effective_end",
+                    LocalDateTime.parse("2025-01-02T00:00:00"))),
+            null,
+            null // no validation errors expected
+            ));
   }
 
   private static Arguments changeTrackingColumnsTestCase(boolean isSnapshotMerge) {
@@ -2741,6 +3986,65 @@ public class SCD2MergeBasicIntegrationTest {
     TestUtil.dropIcebergTable(swiftLakeEngine, tableName);
   }
 
+  private static SCD2MergeInput createSCD2Input(
+      List<Map<String, Object>> inputData,
+      String tableFilter,
+      List<String> keyColumns,
+      String currentFlagColumn,
+      String effectiveTimestamp,
+      String effectiveStartColumn,
+      String effectiveEndColumn,
+      boolean generateEffectiveTimestamp,
+      boolean isSnapshot) {
+
+    // Create a SCD2MergeInput with the specified parameters
+    SCD2MergeInput input =
+        new SCD2MergeInput(
+            inputData, tableFilter, keyColumns, currentFlagColumn, null, null, isSnapshot);
+
+    // Set SCD2-specific fields
+    input.overrideSCDColumns = true;
+    input.effectiveTimestamp = effectiveTimestamp;
+    input.effectiveStartColumn = effectiveStartColumn;
+    input.effectiveEndColumn = effectiveEndColumn;
+    input.generateEffectiveTimestamp = generateEffectiveTimestamp;
+
+    return input;
+  }
+
+  private static SCD2MergeInput createSCD2InputWithChangesMode(
+      List<Map<String, Object>> inputData,
+      String tableFilter,
+      List<String> keyColumns,
+      String currentFlagColumn,
+      String effectiveTimestamp,
+      String effectiveStartColumn,
+      String effectiveEndColumn,
+      boolean generateEffectiveTimestamp,
+      boolean isSnapshot,
+      String operationTypeColumn,
+      String deleteOperationValue) {
+
+    // Create a basic SCD2MergeInput
+    SCD2MergeInput input =
+        createSCD2Input(
+            inputData,
+            tableFilter,
+            keyColumns,
+            currentFlagColumn,
+            effectiveTimestamp,
+            effectiveStartColumn,
+            effectiveEndColumn,
+            generateEffectiveTimestamp,
+            isSnapshot);
+
+    // Set changes mode specific fields
+    input.operationTypeColumn = operationTypeColumn;
+    input.deleteOperationValue = deleteOperationValue;
+
+    return input;
+  }
+
   public static class SCD2MergeInput {
     boolean isSnapshot;
     List<Map<String, Object>> inputData;
@@ -2749,6 +4053,13 @@ public class SCD2MergeBasicIntegrationTest {
     String currentFlagColumn;
     List<String> changeTrackingColumns;
     Map<String, ChangeTrackingMetadata<?>> changeTrackingMetadata;
+    boolean overrideSCDColumns;
+    String effectiveTimestamp;
+    String effectiveStartColumn;
+    String effectiveEndColumn;
+    boolean generateEffectiveTimestamp;
+    String operationTypeColumn;
+    String deleteOperationValue;
 
     public SCD2MergeInput(
         List<Map<String, Object>> inputData,

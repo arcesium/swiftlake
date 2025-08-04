@@ -16,21 +16,21 @@
 package com.arcesium.swiftlake.commands;
 
 /**
- * This class represents metadata for change tracking in SwiftLake operations.
+ * This class represents metadata for value columns in SwiftLake operations.
  *
  * @param <T> The type of the null replacement value
  */
-public class ChangeTrackingMetadata<T> {
-  private Double maxDeltaValue; // Numeric tolerance for comparisons
+public class ValueColumnMetadata<T> {
+  private Double maxDeltaValue; // Numeric tolerance for value comparisons
   private T nullReplacement; // Value to use for NULL during comparison
 
   /**
-   * Constructs a new ChangeTrackingMetadata instance.
+   * Constructs a new ValueColumnsMetadata instance.
    *
    * @param maxDeltaValue The maximum delta value for numeric change tolerance
    * @param nullReplacement The replacement value for null values
    */
-  public ChangeTrackingMetadata(Double maxDeltaValue, T nullReplacement) {
+  public ValueColumnMetadata(Double maxDeltaValue, T nullReplacement) {
     this.maxDeltaValue = maxDeltaValue;
     this.nullReplacement = nullReplacement;
   }
@@ -54,13 +54,13 @@ public class ChangeTrackingMetadata<T> {
   }
 
   /**
-   * Returns a string representation of the ChangeTrackingMetadata object.
+   * Returns a string representation of the ValueColumnsMetadata object.
    *
    * @return A string representation of the object
    */
   @Override
   public String toString() {
-    return "ChangeTrackingMetadata{"
+    return "ValueColumnsMetadata{"
         + "maxDeltaValue="
         + maxDeltaValue
         + ", nullReplacement="

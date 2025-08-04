@@ -16,6 +16,7 @@
 package com.arcesium.swiftlake.sql;
 
 import com.arcesium.swiftlake.SwiftLakeEngine;
+import com.arcesium.swiftlake.common.DateTimeUtil;
 import com.arcesium.swiftlake.common.SwiftLakeException;
 import com.arcesium.swiftlake.common.ValidationException;
 import com.arcesium.swiftlake.expressions.Expressions;
@@ -31,8 +32,6 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
@@ -385,7 +384,8 @@ public class SqlQueryProcessor {
     } else if (optionStr.startsWith("tag_")) {
       branchOrTagName = optionStr.substring("tag_".length());
     } else if (optionStr.startsWith("timestamp_")) {
-      timestamp = parseLocalDateTime(optionStr.substring("timestamp_".length()));
+      timestamp =
+          DateTimeUtil.parseLocalDateTimeToMicros(optionStr.substring("timestamp_".length()));
     } else if (optionStr.startsWith("snapshot_")) {
       String snapshotStr = optionStr.substring("snapshot_".length());
       try {
@@ -1095,17 +1095,11 @@ public class SqlQueryProcessor {
             localDate = (LocalDate) paramValue;
           }
 
-          return DateTimeFormatter.ISO_LOCAL_DATE.format(localDate);
+          return DateTimeUtil.formatLocalDate(localDate);
         }
 
         String value = getDateTimeLiteralString(expr);
-        try {
-          LocalDate.parse(value, DateTimeFormatter.ISO_LOCAL_DATE);
-        } catch (DateTimeParseException e) {
-          throw new ValidationException(
-              "Date %s must be in the format %s", value, DateTimeFormatter.ISO_LOCAL_DATE);
-        }
-
+        DateTimeUtil.parseLocalDate(value);
         return value;
       } else if (typeId == Type.TypeID.TIME) {
         if (isJdbcParam) {
@@ -1120,19 +1114,11 @@ public class SqlQueryProcessor {
             localTime = (LocalTime) paramValue;
           }
 
-          return DateTimeFormatter.ISO_LOCAL_TIME.format(localTime);
+          return DateTimeUtil.formatLocalTimeWithMicros(localTime);
         }
 
         String value = getDateTimeLiteralString(expr);
-        try {
-          LocalTime.parse(value, DateTimeFormatter.ISO_LOCAL_TIME);
-        } catch (DateTimeParseException e) {
-          throw new ValidationException(
-              "Time %s must be in the format %s", value, DateTimeFormatter.ISO_LOCAL_TIME);
-        }
-
-        return value;
-
+        return DateTimeUtil.formatLocalTimeWithMicros(DateTimeUtil.parseLocalTimeToMicros(value));
       } else if (typeId == Type.TypeID.TIMESTAMP) {
         if (((Types.TimestampType) dataType).shouldAdjustToUTC()) {
           if (isJdbcParam) {
@@ -1147,18 +1133,12 @@ public class SqlQueryProcessor {
               offsetDateTime = (OffsetDateTime) paramValue;
             }
 
-            return DateTimeFormatter.ISO_DATE_TIME.format(offsetDateTime);
+            return DateTimeUtil.formatOffsetDateTimeWithMicros(offsetDateTime);
           }
 
           String value = getDateTimeLiteralString(expr);
-          try {
-            OffsetDateTime.parse(value, DateTimeFormatter.ISO_DATE_TIME);
-          } catch (DateTimeParseException e) {
-            throw new ValidationException(
-                "TimestampTZ %s must be in the format %s", value, DateTimeFormatter.ISO_DATE_TIME);
-          }
-
-          return value;
+          return DateTimeUtil.formatOffsetDateTimeWithMicros(
+              DateTimeUtil.parseOffsetDateTimeToMicros(value));
         } else {
           if (isJdbcParam) {
             ValidationException.check(
@@ -1176,12 +1156,12 @@ public class SqlQueryProcessor {
               localDateTime = (LocalDateTime) paramValue;
             }
 
-            return DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(localDateTime);
+            return DateTimeUtil.formatLocalDateTimeWithMicros(localDateTime);
           }
 
           String value = getDateTimeLiteralString(expr);
-          parseLocalDateTime(value);
-          return value;
+          return DateTimeUtil.formatLocalDateTimeWithMicros(
+              DateTimeUtil.parseLocalDateTimeToMicros(value));
         }
       }
     } catch (ValidationException e) {
@@ -1192,15 +1172,6 @@ public class SqlQueryProcessor {
     }
 
     throw new ValidationException("Unsupported value %s with type %s", expr, dataType);
-  }
-
-  private LocalDateTime parseLocalDateTime(String value) {
-    try {
-      return LocalDateTime.parse(value, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
-    } catch (DateTimeParseException e) {
-      throw new ValidationException(
-          "Timestamp %s must be in the format %s", value, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
-    }
   }
 
   private String getLongValueAsString(
