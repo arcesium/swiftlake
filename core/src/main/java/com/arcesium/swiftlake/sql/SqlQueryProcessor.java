@@ -1098,7 +1098,7 @@ public class SqlQueryProcessor {
           return DateTimeUtil.formatLocalDate(localDate);
         }
 
-        String value = getDateTimeLiteralString(expr);
+        String value = getDateTimeLiteralString(expr, DateTimeLiteralExpression.DateTime.DATE);
         DateTimeUtil.parseLocalDate(value);
         return value;
       } else if (typeId == Type.TypeID.TIME) {
@@ -1117,7 +1117,7 @@ public class SqlQueryProcessor {
           return DateTimeUtil.formatLocalTimeWithMicros(localTime);
         }
 
-        String value = getDateTimeLiteralString(expr);
+        String value = getDateTimeLiteralString(expr, DateTimeLiteralExpression.DateTime.TIME);
         return DateTimeUtil.formatLocalTimeWithMicros(DateTimeUtil.parseLocalTimeToMicros(value));
       } else if (typeId == Type.TypeID.TIMESTAMP) {
         if (((Types.TimestampType) dataType).shouldAdjustToUTC()) {
@@ -1136,7 +1136,8 @@ public class SqlQueryProcessor {
             return DateTimeUtil.formatOffsetDateTimeWithMicros(offsetDateTime);
           }
 
-          String value = getDateTimeLiteralString(expr);
+          String value =
+              getDateTimeLiteralString(expr, DateTimeLiteralExpression.DateTime.TIMESTAMPTZ);
           return DateTimeUtil.formatOffsetDateTimeWithMicros(
               DateTimeUtil.parseOffsetDateTimeToMicros(value));
         } else {
@@ -1159,7 +1160,8 @@ public class SqlQueryProcessor {
             return DateTimeUtil.formatLocalDateTimeWithMicros(localDateTime);
           }
 
-          String value = getDateTimeLiteralString(expr);
+          String value =
+              getDateTimeLiteralString(expr, DateTimeLiteralExpression.DateTime.TIMESTAMP);
           return DateTimeUtil.formatLocalDateTimeWithMicros(
               DateTimeUtil.parseLocalDateTimeToMicros(value));
         }
@@ -1299,10 +1301,13 @@ public class SqlQueryProcessor {
     return input;
   }
 
-  private String getDateTimeLiteralString(Expression expr) {
+  private String getDateTimeLiteralString(
+      Expression expr, DateTimeLiteralExpression.DateTime type) {
     ValidationException.check(
-        expr instanceof DateTimeLiteralExpression || expr instanceof StringValue,
-        "Invalid type %s",
+        (expr instanceof DateTimeLiteralExpression literalExpr && literalExpr.getType() == type)
+            || expr instanceof StringValue,
+        "Expected %s literal or string value, but got: %s",
+        type.name(),
         expr);
 
     if (expr instanceof DateTimeLiteralExpression dateTimeExpr) {
