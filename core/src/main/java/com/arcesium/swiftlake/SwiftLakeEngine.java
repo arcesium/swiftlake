@@ -878,6 +878,38 @@ public class SwiftLakeEngine implements AutoCloseable {
   }
 
   /**
+   * Applies a snapshot as SCD1 (Slowly Changing Dimension Type 1) to the specified table.
+   *
+   * @param tableName The name of the table to apply the snapshot to.
+   * @return A SnapshotModeSetTableFilter object for further configuration.
+   */
+  public SCD1Merge.SnapshotModeSetTableFilter applySnapshotAsSCD1(String tableName) {
+    return SCD1Merge.applySnapshot(this, tableName);
+  }
+
+  /**
+   * Applies a snapshot as SCD1 (Slowly Changing Dimension Type 1) to the specified table.
+   *
+   * @param table The Table object to apply the snapshot to.
+   * @return A SnapshotModeSetTableFilter object for further configuration.
+   */
+  public SCD1Merge.SnapshotModeSetTableFilter applySnapshotAsSCD1(Table table) {
+    return SCD1Merge.applySnapshot(this, table);
+  }
+
+  /**
+   * Applies a snapshot as SCD1 (Slowly Changing Dimension Type 1) to the specified table batch
+   * transaction.
+   *
+   * @param tableBatchTransaction The TableBatchTransaction object to apply the snapshot to.
+   * @return A SnapshotModeSetTableFilter object for further configuration.
+   */
+  public SCD1Merge.SnapshotModeSetTableFilter applySnapshotAsSCD1(
+      TableBatchTransaction tableBatchTransaction) {
+    return SCD1Merge.applySnapshot(this, tableBatchTransaction);
+  }
+
+  /**
    * Initiates an SCD2 (Slowly Changing Dimension Type 2) merge operation on the specified table.
    *
    * @param tableName The name of the table to apply SCD2 changes to.

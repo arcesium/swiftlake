@@ -18,7 +18,7 @@
                     <!-- if old record does not exist then insert -->
                     WHEN me.__candidate__ IS NULL THEN 'I'
                     <!-- if matching record found and values are different then update -->
-                    WHEN me.__candidate__ AND other.__candidate__ AND (<include refid="Common.changeTrackingColumnsDiff"/>) THEN 'U'
+                    WHEN me.__candidate__ AND other.__candidate__ AND (<include refid="changeTrackingColumnsDiff"/>) THEN 'U'
                     <!-- if old record exists but no matching new record then delete -->
                     WHEN me.__candidate__ AND other.__candidate__ IS NULL THEN 'D'
                     <!-- No change -->
@@ -28,7 +28,7 @@
                 <foreach collection="allColumns" item="element" index="index"  open = "" separator="," >
                     other.${element} AS __other_${element}
                 </foreach>,
-                other.file_row_number AS __other_file_row_number__,
+                other.file_row_number AS __other_file_row_number__
                 FROM
                 (
                     SELECT *, CASE WHEN ${boundaryCondition} AND ${effectiveStartColumn} &lt; ${effectiveTimestamp} AND ${effectiveEndColumn} IS NULL
@@ -43,8 +43,7 @@
                 SELECT * REPLACE(
                     <foreach collection="allColumns" item="element" index="index"  open = "" separator="," >
                         CASE WHEN __operation_type__='N' THEN NULL ELSE __other_${element} END AS __other_${element}
-                    </foreach>,
-                    CASE WHEN __operation_type__='N' THEN NULL ELSE __other_file_row_number__ END AS __other_file_row_number__
+                    </foreach>
                 )
                 FROM diffs
             )
@@ -141,10 +140,10 @@
                 CASE
                 <!-- Order of the below conditions is very important -->
                     <!-- Soft delete the matching record for delete operation value -->
-                    WHEN me.__candidate__ AND other.__candidate__ AND ${operationTypeColumn} = '${deleteOperationValue}' THEN 'D'
+                    WHEN me.__candidate__ AND other.__candidate__ AND ${operationTypeColumn} = ${deleteOperationValue} THEN 'D'
                     WHEN me.__candidate__ AND other.__candidate__ THEN
                     <!-- if matching record found and values are different, then update -->
-                        CASE WHEN (<include refid="Common.changeTrackingColumnsDiff"/>) THEN 'U' ELSE 'N-S' END
+                        CASE WHEN (<include refid="changeTrackingColumnsDiff"/>) THEN 'U' ELSE 'N-S' END
                     ELSE 'N'
                 END AS __operation_type__,
             me.*,
@@ -177,7 +176,7 @@
             SELECT *
             FROM (
                 SELECT src.*
-                FROM (SELECT * FROM ${sourceTableName} WHERE ${operationTypeColumn} != '${deleteOperationValue}') src
+                FROM (SELECT * FROM ${sourceTableName} WHERE ${operationTypeColumn} != ${deleteOperationValue}) src
                 <if test="!appendOnly and diffsFilePath != null">
                     LEFT OUTER JOIN (SELECT * FROM ${diffsFilePath} WHERE __operation_type__='N-S') nuDiffs
                         ON (<include refid="Common.keyColumnJoinWithAlias"><property name="leftAlias" value="src"/><property name="rightAlias" value="nuDiffs"/></include>)
@@ -222,4 +221,28 @@
         )
         SELECT * FROM updates
     </update>
+
+    <sql id="changeTrackingColumnsDiff">
+        <foreach collection="changeTrackingColumns" item="element" index="index"  open = "" separator=" OR" >
+            <bind name="__delta__" value="null" />
+            <bind name="__null_value__" value="null" />
+            <if test="changeTrackingColumnMaxDeltaValues != null">
+                <bind name="__delta__" value="changeTrackingColumnMaxDeltaValues[element]" />
+            </if>
+            <if test="changeTrackingColumnNullReplacements != null">
+                <bind name="__null_value__" value="changeTrackingColumnNullReplacements[element]" />
+            </if>
+            <choose>
+                <when test="__delta__ != null">
+                    abs(coalesce(me.${element},0) - coalesce(other.${element},0)) > ${__delta__}
+                </when>
+                <when test="__null_value__ != null">
+                    coalesce(me.${element},${__null_value__}) IS DISTINCT FROM coalesce(other.${element},${__null_value__})
+                </when>
+                <otherwise>
+                    me.${element} IS DISTINCT FROM other.${element}
+                </otherwise>
+            </choose>
+        </foreach>
+    </sql>
 </mapper>

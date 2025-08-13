@@ -701,6 +701,33 @@ public class SwiftLakeEngineIntegrationTest {
                     Map.of("id", 4L, "name", "Alice", "date", LocalDate.parse("2025-02-02"))),
                 null),
             Arguments.of(
+                "Date Validation with TIME literal type",
+                null,
+                "SELECT id, name, date FROM "
+                    + mainTableName
+                    + " WHERE date > TIME '2025-01-15' AND date < DATE '2025-02-15'",
+                null,
+                null,
+                Pair.of(ValidationException.class, "Expected DATE literal or string value")),
+            Arguments.of(
+                "Date Validation with TIMESTAMP literal type",
+                null,
+                "SELECT id, name, date FROM "
+                    + mainTableName
+                    + " WHERE date > DATE '2025-01-15' AND date < TIMESTAMP '2025-02-15'",
+                null,
+                null,
+                Pair.of(ValidationException.class, "Expected DATE literal or string value")),
+            Arguments.of(
+                "Date Validation with TIMESTAMPTZ literal type",
+                null,
+                "SELECT id, name, date FROM "
+                    + mainTableName
+                    + " WHERE date > TIMESTAMPTZ '2025-01-15' AND date < DATE '2025-02-15'",
+                null,
+                null,
+                Pair.of(ValidationException.class, "Expected DATE literal or string value")),
+            Arguments.of(
                 "Boolean Conditions",
                 null,
                 "SELECT id, name FROM " + mainTableName + " WHERE bool_col = true",
@@ -717,6 +744,42 @@ public class SwiftLakeEngineIntegrationTest {
                 Arrays.asList(Map.of("id", 3L, "name", "Bob"), Map.of("id", 4L, "name", "Alice")),
                 null),
             Arguments.of(
+                "Time Comparisons",
+                null,
+                "SELECT id, name FROM "
+                    + mainTableName
+                    + " WHERE time_col > TIME '02:00:00' AND time_col < TIME'04:02:00'",
+                null,
+                Arrays.asList(Map.of("id", 2L, "name", "Jane"), Map.of("id", 3L, "name", "Bob")),
+                null),
+            Arguments.of(
+                "Time validation with DATE literal type",
+                null,
+                "SELECT id, name FROM "
+                    + mainTableName
+                    + " WHERE time_col > DATE '02:00:00' AND time_col < '04:02:00'",
+                null,
+                null,
+                Pair.of(ValidationException.class, "Expected TIME literal or string value")),
+            Arguments.of(
+                "Time validation with TIMESTAMP literal type",
+                null,
+                "SELECT id, name FROM "
+                    + mainTableName
+                    + " WHERE time_col > TIMESTAMP '02:00:00' AND time_col < '04:02:00'",
+                null,
+                null,
+                Pair.of(ValidationException.class, "Expected TIME literal or string value")),
+            Arguments.of(
+                "Time validation with TIMESTAMPTZ literal type",
+                null,
+                "SELECT id, name FROM "
+                    + mainTableName
+                    + " WHERE time_col > TIMESTAMPTZ '02:00:00' AND time_col < '04:02:00'",
+                null,
+                null,
+                Pair.of(ValidationException.class, "Expected TIME literal or string value")),
+            Arguments.of(
                 "Timestamp Comparisons",
                 null,
                 "SELECT id, name FROM "
@@ -725,6 +788,69 @@ public class SwiftLakeEngineIntegrationTest {
                 null,
                 Arrays.asList(Map.of("id", 2L, "name", "Jane"), Map.of("id", 3L, "name", "Bob")),
                 null),
+            Arguments.of(
+                "Timestamp validation with DATE literal type",
+                null,
+                "SELECT id, name FROM "
+                    + mainTableName
+                    + " WHERE timestamp_col > DATE '2025-01-01T12:00:00' AND timestamp_col < TIMESTAMP '2025-02-01T12:00:00'",
+                null,
+                null,
+                Pair.of(ValidationException.class, "Expected TIMESTAMP literal or string value")),
+            Arguments.of(
+                "Timestamp validation with TIMESTAMPTZ literal type",
+                null,
+                "SELECT id, name FROM "
+                    + mainTableName
+                    + " WHERE timestamp_col > TIMESTAMP '2025-01-01T12:00:00' AND timestamp_col < TIMESTAMPTZ '2025-02-01T12:00:00'",
+                null,
+                null,
+                Pair.of(ValidationException.class, "Expected TIMESTAMP literal or string value")),
+            Arguments.of(
+                "Timestamp validation with TIME literal type",
+                null,
+                "SELECT id, name FROM "
+                    + mainTableName
+                    + " WHERE timestamp_col > TIMESTAMP '2025-01-01T12:00:00' AND timestamp_col < TIME '2025-02-01T12:00:00'",
+                null,
+                null,
+                Pair.of(ValidationException.class, "Expected TIMESTAMP literal or string value")),
+            Arguments.of(
+                "TimestampTZ Comparisons",
+                null,
+                "SELECT id, name FROM "
+                    + mainTableName
+                    + " WHERE timestamptz_col > TIMESTAMPTZ '2025-01-01T12:00:00+05:30' AND timestamptz_col < TIMESTAMPTZ'2025-02-01T12:00:00+05:30'",
+                null,
+                Arrays.asList(Map.of("id", 2L, "name", "Jane"), Map.of("id", 3L, "name", "Bob")),
+                null),
+            Arguments.of(
+                "TimestampTZ validation with DATE literal type",
+                null,
+                "SELECT id, name FROM "
+                    + mainTableName
+                    + " WHERE timestamptz_col > DATE '2025-01-01T12:00:00+05:30' AND timestamptz_col < '2025-02-01T12:00:00+05:30'",
+                null,
+                null,
+                Pair.of(ValidationException.class, "Expected TIMESTAMPTZ literal or string value")),
+            Arguments.of(
+                "TimestampTZ validation with TIME literal type",
+                null,
+                "SELECT id, name FROM "
+                    + mainTableName
+                    + " WHERE timestamptz_col > TIME '2025-01-01T12:00:00+05:30' AND timestamptz_col < '2025-02-01T12:00:00+05:30'",
+                null,
+                null,
+                Pair.of(ValidationException.class, "Expected TIMESTAMPTZ literal or string value")),
+            Arguments.of(
+                "TimestampTZ validation with TIMESTAMP literal type",
+                null,
+                "SELECT id, name FROM "
+                    + mainTableName
+                    + " WHERE timestamptz_col > TIMESTAMP '2025-01-01T12:00:00+05:30' AND timestamptz_col < '2025-02-01T12:00:00+05:30'",
+                null,
+                null,
+                Pair.of(ValidationException.class, "Expected TIMESTAMPTZ literal or string value")),
             Arguments.of(
                 "Struct Field Conditions",
                 null,

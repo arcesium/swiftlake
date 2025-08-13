@@ -53,27 +53,27 @@ class SCD1MergeDaoTest {
   }
 
   @Test
-  void testMergeFindDiffs() {
+  void testChangesBasedMergeFindDiffs() {
     SCD1MergeProperties properties = new SCD1MergeProperties();
     properties.setDestinationTableName("target_table");
     properties.setSourceTableName("source_table");
     when(mockSqlSessionFactory.openSession()).thenReturn(mockSqlSession);
-    scd1MergeDao.mergeFindDiffs(properties);
+    scd1MergeDao.changesBasedMergeFindDiffs(properties);
 
-    verify(mockSqlSession).update("SCD1Merge.mergeFindDiffs", properties);
+    verify(mockSqlSession).update("SCD1Merge.changesBasedMergeFindDiffs", properties);
     verify(mockSqlSession).close();
   }
 
   @Test
-  void testGetMergeUpsertsSql() {
+  void testGetChangesBasedMergeResultsSql() {
     SCD1MergeProperties properties = new SCD1MergeProperties();
     properties.setDestinationTableName("target_table");
     properties.setSourceTableName("source_table");
 
-    String expectedSql = "testGetMergeUpsertsSql...";
-    when(mockSqlSessionFactory.getSql("SCD1Merge.mergeUpserts", properties))
+    String expectedSql = "testGetChangesBasedMergeResultsSql...";
+    when(mockSqlSessionFactory.getSql("SCD1Merge.changesBasedMergeResults", properties))
         .thenReturn(expectedSql);
-    String result = scd1MergeDao.getMergeUpsertsSql(properties);
+    String result = scd1MergeDao.getChangesBasedMergeResultsSql(properties);
 
     assertThat(result).isEqualTo(expectedSql);
   }
@@ -93,24 +93,24 @@ class SCD1MergeDaoTest {
   }
 
   @Test
-  void testSaveDistinctFileNames() {
+  void testSaveDistinctFileNamesForChangesMerge() {
     SCD1MergeProperties properties = new SCD1MergeProperties();
     properties.setDestinationTableName("target_table");
     properties.setSourceTableName("source_table");
     when(mockSqlSessionFactory.openSession()).thenReturn(mockSqlSession);
-    scd1MergeDao.saveDistinctFileNames(properties);
+    scd1MergeDao.saveDistinctFileNamesForChangesMerge(properties);
 
-    verify(mockSqlSession).update("SCD1Merge.saveDistinctFileNames", properties);
+    verify(mockSqlSession).update("SCD1Merge.saveDistinctFileNamesForChangesMerge", properties);
     verify(mockSqlSession).close();
   }
 
   @Test
-  void testMergeFindDiffsWithException() {
+  void testChangesBasedMergeFindDiffsWithException() {
     SCD1MergeProperties properties = new SCD1MergeProperties();
     when(mockSqlSessionFactory.openSession()).thenReturn(mockSqlSession);
     doThrow(new RuntimeException("Database error")).when(mockSqlSession).update(anyString(), any());
     when(mockSqlSessionFactory.openSession()).thenReturn(mockSqlSession);
-    assertThatThrownBy(() -> scd1MergeDao.mergeFindDiffs(properties))
+    assertThatThrownBy(() -> scd1MergeDao.changesBasedMergeFindDiffs(properties))
         .isInstanceOf(RuntimeException.class)
         .hasMessage("Database error");
 
@@ -118,12 +118,12 @@ class SCD1MergeDaoTest {
   }
 
   @Test
-  void testGetMergeUpsertsSqlWithException() {
+  void testGetChangesBasedMergeResultsSqlWithException() {
     SCD1MergeProperties properties = new SCD1MergeProperties();
     when(mockSqlSessionFactory.getSql(anyString(), any()))
         .thenThrow(new RuntimeException("SQL error"));
 
-    assertThatThrownBy(() -> scd1MergeDao.getMergeUpsertsSql(properties))
+    assertThatThrownBy(() -> scd1MergeDao.getChangesBasedMergeResultsSql(properties))
         .isInstanceOf(RuntimeException.class)
         .hasMessage("SQL error");
   }
@@ -143,12 +143,112 @@ class SCD1MergeDaoTest {
   }
 
   @Test
-  void testSaveDistinctFileNamesWithException() {
+  void testSaveDistinctFileNamesForChangesMergeWithException() {
     SCD1MergeProperties properties = new SCD1MergeProperties();
     when(mockSqlSessionFactory.openSession()).thenReturn(mockSqlSession);
     doThrow(new RuntimeException("Save error")).when(mockSqlSession).update(anyString(), any());
 
-    assertThatThrownBy(() -> scd1MergeDao.saveDistinctFileNames(properties))
+    assertThatThrownBy(() -> scd1MergeDao.saveDistinctFileNamesForChangesMerge(properties))
+        .isInstanceOf(RuntimeException.class)
+        .hasMessage("Save error");
+
+    verify(mockSqlSession).close();
+  }
+
+  @Test
+  void testSnapshotBasedMergeFindDiffs() {
+    SCD1MergeProperties properties = new SCD1MergeProperties();
+    properties.setDestinationTableName("target_table");
+    properties.setSourceTableName("source_table");
+    when(mockSqlSessionFactory.openSession()).thenReturn(mockSqlSession);
+    scd1MergeDao.snapshotBasedMergeFindDiffs(properties);
+
+    verify(mockSqlSession).update("SCD1Merge.snapshotBasedMergeFindDiffs", properties);
+    verify(mockSqlSession).close();
+  }
+
+  @Test
+  void testGetSnapshotBasedMergeAppendOnlySql() {
+    SCD1MergeProperties properties = new SCD1MergeProperties();
+    properties.setDestinationTableName("target_table");
+    properties.setSourceTableName("source_table");
+
+    String expectedSql = "testGetSnapshotBasedMergeAppendOnlySql...";
+    when(mockSqlSessionFactory.getSql("SCD1Merge.snapshotBasedMergeAppendOnly", properties))
+        .thenReturn(expectedSql);
+    String result = scd1MergeDao.getSnapshotBasedMergeAppendOnlySql(properties);
+
+    assertThat(result).isEqualTo(expectedSql);
+  }
+
+  @Test
+  void testGetSnapshotBasedMergeResultsSql() {
+    SCD1MergeProperties properties = new SCD1MergeProperties();
+    properties.setDestinationTableName("target_table");
+    properties.setSourceTableName("source_table");
+
+    String expectedSql = "testGetSnapshotBasedMergeResultsSql...";
+    when(mockSqlSessionFactory.getSql("SCD1Merge.snapshotBasedMergeResults", properties))
+        .thenReturn(expectedSql);
+    String result = scd1MergeDao.getSnapshotBasedMergeResultsSql(properties);
+
+    assertThat(result).isEqualTo(expectedSql);
+  }
+
+  @Test
+  void testSaveDistinctFileNamesForSnapshotMerge() {
+    SCD1MergeProperties properties = new SCD1MergeProperties();
+    properties.setDestinationTableName("target_table");
+    properties.setSourceTableName("source_table");
+    when(mockSqlSessionFactory.openSession()).thenReturn(mockSqlSession);
+    scd1MergeDao.saveDistinctFileNamesForSnapshotMerge(properties);
+
+    verify(mockSqlSession).update("SCD1Merge.saveDistinctFileNamesForSnapshotMerge", properties);
+    verify(mockSqlSession).close();
+  }
+
+  @Test
+  void testSnapshotBasedMergeFindDiffsWithException() {
+    SCD1MergeProperties properties = new SCD1MergeProperties();
+    when(mockSqlSessionFactory.openSession()).thenReturn(mockSqlSession);
+    doThrow(new RuntimeException("Database error")).when(mockSqlSession).update(anyString(), any());
+
+    assertThatThrownBy(() -> scd1MergeDao.snapshotBasedMergeFindDiffs(properties))
+        .isInstanceOf(RuntimeException.class)
+        .hasMessage("Database error");
+
+    verify(mockSqlSession).close();
+  }
+
+  @Test
+  void testGetSnapshotBasedMergeAppendOnlySqlWithException() {
+    SCD1MergeProperties properties = new SCD1MergeProperties();
+    when(mockSqlSessionFactory.getSql(anyString(), any()))
+        .thenThrow(new RuntimeException("SQL error"));
+
+    assertThatThrownBy(() -> scd1MergeDao.getSnapshotBasedMergeAppendOnlySql(properties))
+        .isInstanceOf(RuntimeException.class)
+        .hasMessage("SQL error");
+  }
+
+  @Test
+  void testGetSnapshotBasedMergeResultsSqlWithException() {
+    SCD1MergeProperties properties = new SCD1MergeProperties();
+    when(mockSqlSessionFactory.getSql(anyString(), any()))
+        .thenThrow(new RuntimeException("SQL error"));
+
+    assertThatThrownBy(() -> scd1MergeDao.getSnapshotBasedMergeResultsSql(properties))
+        .isInstanceOf(RuntimeException.class)
+        .hasMessage("SQL error");
+  }
+
+  @Test
+  void testSaveDistinctFileNamesForSnapshotMergeWithException() {
+    SCD1MergeProperties properties = new SCD1MergeProperties();
+    when(mockSqlSessionFactory.openSession()).thenReturn(mockSqlSession);
+    doThrow(new RuntimeException("Save error")).when(mockSqlSession).update(anyString(), any());
+
+    assertThatThrownBy(() -> scd1MergeDao.saveDistinctFileNamesForSnapshotMerge(properties))
         .isInstanceOf(RuntimeException.class)
         .hasMessage("Save error");
 

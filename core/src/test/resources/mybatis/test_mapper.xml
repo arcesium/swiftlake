@@ -28,6 +28,14 @@
         SELECT ${id2} AS id, '${name2}' AS name, ${value2} AS value, 'I' AS operation_type
     </select>
 
+    <select id="getSnapshotData" resultType="java.util.HashMap">
+        SELECT ${id1} AS id, '${name1}' AS name, ${value1} AS value
+        UNION ALL
+        SELECT ${id2} AS id, '${name2}' AS name, ${value2} AS value
+        UNION ALL
+        SELECT ${id3} AS id, '${name3}' AS name, ${value3} AS value
+    </select>
+
     <select id="getSCD2ChangeData" resultType="java.util.HashMap">
         SELECT ${id1} AS id, '${name1}' AS name, ${value1} AS value, '${opType1}' AS operation_type
         UNION ALL

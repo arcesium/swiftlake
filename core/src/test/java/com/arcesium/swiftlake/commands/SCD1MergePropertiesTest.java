@@ -21,7 +21,9 @@ import static org.mockito.Mockito.*;
 import com.arcesium.swiftlake.expressions.Expression;
 import com.arcesium.swiftlake.mybatis.SwiftLakeSqlSessionFactory;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -99,11 +101,65 @@ class SCD1MergePropertiesTest {
     properties.setExecuteSourceSqlOnceOnly(true);
     properties.setSkipDataSorting(true);
     properties.setProcessSourceTables(true);
+    properties.setSkipEmptySource(true);
 
     assertThat(properties.isAppendOnly()).isTrue();
     assertThat(properties.isExecuteSourceSqlOnceOnly()).isTrue();
     assertThat(properties.isSkipDataSorting()).isTrue();
     assertThat(properties.isProcessSourceTables()).isTrue();
+    assertThat(properties.isSkipEmptySource()).isTrue();
+  }
+
+  @Test
+  void testSetAndGetMergeMode() {
+    properties.setMode(SCD1MergeMode.CHANGES);
+    assertThat(properties.getMode()).isEqualTo(SCD1MergeMode.CHANGES);
+
+    properties.setMode(SCD1MergeMode.SNAPSHOT);
+    assertThat(properties.getMode()).isEqualTo(SCD1MergeMode.SNAPSHOT);
+  }
+
+  @Test
+  void testSetAndGetValueColumnsProperties() {
+    // Test value columns
+    List<String> valueColumns = Arrays.asList("price", "quantity", "discount");
+    properties.setValueColumns(valueColumns);
+    assertThat(properties.getValueColumns()).containsExactlyElementsOf(valueColumns);
+
+    // Test value column metadata map
+    Map<String, ValueColumnMetadata<?>> metadataMap = new HashMap<>();
+    metadataMap.put("price", new ValueColumnMetadata<>(0.01, 0.0));
+    metadataMap.put("quantity", new ValueColumnMetadata<>(null, 0));
+    properties.setValueColumnMetadataMap(metadataMap);
+
+    assertThat(properties.getValueColumnMetadataMap())
+        .hasSize(2)
+        .containsKey("price")
+        .containsKey("quantity");
+    assertThat(properties.getValueColumnMetadataMap().get("price").getMaxDeltaValue())
+        .isEqualTo(0.01);
+    assertThat(properties.getValueColumnMetadataMap().get("quantity").getNullReplacement())
+        .isEqualTo(0);
+
+    // Test value column delta values
+    Map<String, Double> deltaValues = new HashMap<>();
+    deltaValues.put("price", 0.01);
+    deltaValues.put("amount", 0.5);
+    properties.setValueColumnMaxDeltaValues(deltaValues);
+    assertThat(properties.getValueColumnMaxDeltaValues())
+        .hasSize(2)
+        .containsEntry("price", 0.01)
+        .containsEntry("amount", 0.5);
+
+    // Test value column null replacements
+    Map<String, String> nullReplacements = new HashMap<>();
+    nullReplacements.put("category", "UNKNOWN");
+    nullReplacements.put("description", "N/A");
+    properties.setValueColumnNullReplacements(nullReplacements);
+    assertThat(properties.getValueColumnNullReplacements())
+        .hasSize(2)
+        .containsEntry("category", "UNKNOWN")
+        .containsEntry("description", "N/A");
   }
 
   @Test
@@ -113,6 +169,13 @@ class SCD1MergePropertiesTest {
     properties.setKeyColumns(Arrays.asList("id", "code"));
     properties.setOperationTypeColumn("operation");
     properties.setDeleteOperationValue("DELETE");
+    properties.setMode(SCD1MergeMode.SNAPSHOT);
+    properties.setValueColumns(Arrays.asList("price", "quantity"));
+    properties.setSkipEmptySource(true);
+
+    Map<String, ValueColumnMetadata<?>> metadataMap = new HashMap<>();
+    metadataMap.put("price", new ValueColumnMetadata<>(0.01, null));
+    properties.setValueColumnMetadataMap(metadataMap);
 
     String toStringResult = properties.toString();
 
@@ -121,6 +184,10 @@ class SCD1MergePropertiesTest {
         .contains("sql='SELECT * FROM table'")
         .contains("keyColumns=[id, code]")
         .contains("operationColumnName='operation'")
-        .contains("deleteOperationValue='DELETE'");
+        .contains("deleteOperationValue='DELETE'")
+        .contains("mode=SNAPSHOT")
+        .contains("valueColumns=[price, quantity]")
+        .contains("valueColumnMetadataMap=")
+        .contains("skipEmptySource=true");
   }
 }

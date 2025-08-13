@@ -18,30 +18,6 @@
         </foreach>
     </sql>
 
-    <sql id="changeTrackingColumnsDiff">
-        <foreach collection="changeTrackingColumns" item="element" index="index"  open = "" separator=" OR" >
-            <bind name="__delta__" value="null" />
-            <bind name="__null_value__" value="null" />
-            <if test="changeTrackingColumnMaxDeltaValues != null">
-                <bind name="__delta__" value="changeTrackingColumnMaxDeltaValues[element]" />
-            </if>
-            <if test="changeTrackingColumnNullReplacements != null">
-                <bind name="__null_value__" value="changeTrackingColumnNullReplacements[element]" />
-            </if>
-            <choose>
-                <when test="__delta__ != null">
-                    abs(coalesce(me.${element},0) - coalesce(other.${element},0)) > ${__delta__}
-                </when>
-                <when test="__null_value__ != null">
-                    coalesce(me.${element},${__null_value__}) IS DISTINCT FROM coalesce(other.${element},${__null_value__})
-                </when>
-                <otherwise>
-                    me.${element} IS DISTINCT FROM other.${element}
-                </otherwise>
-            </choose>
-        </foreach>
-    </sql>
-
     <select id="mergeCardinalityCheck" resultType="Boolean" parameterType="String">
         SELECT EXISTS (
             SELECT COUNT(*) row_count

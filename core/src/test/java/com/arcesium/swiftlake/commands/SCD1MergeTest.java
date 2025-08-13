@@ -283,6 +283,7 @@ class SCD1MergeTest {
       SCD1MergeProperties properties = extractPropertiesFromBuilder(builder);
       assertThat(properties.getSqlSessionFactory()).isEqualTo(mockSqlSessionFactory);
       assertThat(properties.isProcessSourceTables()).isEqualTo(false);
+      assertThat(properties.getMode()).isEqualTo(SCD1MergeMode.CHANGES);
 
       verify(mockEngine).getTable(tableName, true);
     }
@@ -298,6 +299,7 @@ class SCD1MergeTest {
       assertThat(builder).extracting("table").isEqualTo(mockTable);
       SCD1MergeProperties properties = extractPropertiesFromBuilder(builder);
       assertThat(properties.getSqlSessionFactory()).isEqualTo(mockSqlSessionFactory);
+      assertThat(properties.getMode()).isEqualTo(SCD1MergeMode.CHANGES);
     }
 
     @Test
@@ -314,6 +316,223 @@ class SCD1MergeTest {
       assertThat(builder).extracting("tableBatchTransaction").isEqualTo(mockTableBatchTransaction);
       SCD1MergeProperties properties = extractPropertiesFromBuilder(builder);
       assertThat(properties.getSqlSessionFactory()).isEqualTo(mockSqlSessionFactory);
+      assertThat(properties.getMode()).isEqualTo(SCD1MergeMode.CHANGES);
+    }
+  }
+
+  @Nested
+  @DisplayName("Snapshot Mode Builder Configuration Tests")
+  class SnapshotModeBuilderConfigurationTests {
+
+    @Test
+    @DisplayName("Test snapshot mode builder chain with basic configuration")
+    void testSnapshotModeBuilderChain() {
+      when(mockEngine.getSqlSessionFactory()).thenReturn(mockSqlSessionFactory);
+      SCD1Merge.SnapshotModeBuilder builder =
+          SCD1Merge.applySnapshot(mockEngine, tableName)
+              .tableFilter(mockExpression)
+              .sourceSql(sql)
+              .keyColumns(keyColumns)
+              .columns(columns)
+              .skipDataSorting(true)
+              .executeSourceSqlOnceOnly(true)
+              .processSourceTables(true);
+
+      SCD1MergeProperties properties = extractPropertiesFromSnapshotModeBuilder(builder);
+      assertThat(properties.getTableFilter()).isEqualTo(mockExpression);
+      assertThat(properties.getSql()).isEqualTo(sql);
+      assertThat(properties.getKeyColumns()).isEqualTo(keyColumns);
+      assertThat(properties.getColumns()).isEqualTo(columns);
+      assertThat(properties.isSkipDataSorting()).isTrue();
+      assertThat(properties.isExecuteSourceSqlOnceOnly()).isTrue();
+      assertThat(properties.isProcessSourceTables()).isTrue();
+      assertThat(properties.getSqlSessionFactory()).isEqualTo(mockSqlSessionFactory);
+      assertThat(properties.getMode()).isEqualTo(SCD1MergeMode.SNAPSHOT);
+    }
+
+    @Test
+    @DisplayName("Test snapshot mode with value columns configuration")
+    void testSnapshotModeWithValueColumns() {
+      List<String> valueColumns = Arrays.asList("name", "value");
+      SCD1Merge.SnapshotModeBuilder builder =
+          SCD1Merge.applySnapshot(mockEngine, tableName)
+              .tableFilterSql("id > 100")
+              .sourceSql(sql)
+              .keyColumns(keyColumns)
+              .valueColumns(valueColumns);
+
+      SCD1MergeProperties properties = extractPropertiesFromSnapshotModeBuilder(builder);
+      assertThat(properties.getValueColumns()).isEqualTo(valueColumns);
+      assertThat(properties.getMode()).isEqualTo(SCD1MergeMode.SNAPSHOT);
+    }
+
+    @Test
+    @DisplayName("Test snapshot mode with value column metadata")
+    void testSnapshotModeWithValueColumnMetadata() {
+      ValueColumnMetadata<Double> numericMetadata = new ValueColumnMetadata<>(0.01, null);
+      ValueColumnMetadata<String> stringMetadata = new ValueColumnMetadata<>(null, "N/A");
+
+      SCD1Merge.SnapshotModeBuilder builder =
+          SCD1Merge.applySnapshot(mockEngine, tableName)
+              .tableFilterSql("id > 100")
+              .sourceSql(sql)
+              .keyColumns(keyColumns)
+              .valueColumns(Arrays.asList("name", "value"))
+              .valueColumnMetadata("value", numericMetadata)
+              .valueColumnMetadata("name", stringMetadata);
+
+      SCD1MergeProperties properties = extractPropertiesFromSnapshotModeBuilder(builder);
+      Map<String, ValueColumnMetadata<?>> expectedMetadata = new HashMap<>();
+      expectedMetadata.put("value", numericMetadata);
+      expectedMetadata.put("name", stringMetadata);
+
+      assertThat(properties.getValueColumnMetadataMap()).containsAllEntriesOf(expectedMetadata);
+    }
+
+    @Test
+    @DisplayName("Test snapshot mode with bulk value column metadata")
+    void testSnapshotModeWithBulkValueColumnMetadata() {
+      Map<String, ValueColumnMetadata<?>> metadataMap = new HashMap<>();
+      metadataMap.put("value", new ValueColumnMetadata<>(0.01, null));
+      metadataMap.put("name", new ValueColumnMetadata<>(null, "N/A"));
+
+      SCD1Merge.SnapshotModeBuilder builder =
+          SCD1Merge.applySnapshot(mockEngine, tableName)
+              .tableFilterSql("id > 100")
+              .sourceSql(sql)
+              .keyColumns(keyColumns)
+              .valueColumnsMetadata(metadataMap);
+
+      SCD1MergeProperties properties = extractPropertiesFromSnapshotModeBuilder(builder);
+      assertThat(properties.getValueColumnMetadataMap()).containsAllEntriesOf(metadataMap);
+    }
+
+    @Test
+    @DisplayName("Test snapshot mode with skip empty source")
+    void testSnapshotModeWithSkipEmptySource() {
+      SCD1Merge.SnapshotModeBuilder builder =
+          SCD1Merge.applySnapshot(mockEngine, tableName)
+              .tableFilterSql("id > 100")
+              .sourceSql(sql)
+              .keyColumns(keyColumns)
+              .skipEmptySource(true);
+
+      SCD1MergeProperties properties = extractPropertiesFromSnapshotModeBuilder(builder);
+      assertThat(properties.isSkipEmptySource()).isTrue();
+    }
+  }
+
+  @Nested
+  @DisplayName("Snapshot Mode Initialization Tests")
+  class SnapshotModeInitializationTests {
+
+    @Test
+    @DisplayName("Test snapshot mode initialization with table name")
+    void testSnapshotModeInitializationWithTableName() {
+      when(mockEngine.getTable(tableName, true)).thenReturn(mockTable);
+      when(mockEngine.getSqlSessionFactory()).thenReturn(mockSqlSessionFactory);
+
+      SCD1Merge.SnapshotModeBuilderImpl builder =
+          (SCD1Merge.SnapshotModeBuilderImpl) SCD1Merge.applySnapshot(mockEngine, tableName);
+
+      assertThat(builder).extracting("swiftLakeEngine").isEqualTo(mockEngine);
+      assertThat(builder).extracting("table").isEqualTo(mockTable);
+
+      SCD1MergeProperties properties = extractPropertiesFromSnapshotModeBuilder(builder);
+      assertThat(properties.getSqlSessionFactory()).isEqualTo(mockSqlSessionFactory);
+      assertThat(properties.getMode()).isEqualTo(SCD1MergeMode.SNAPSHOT);
+      assertThat(properties.getValueColumnMetadataMap()).isNotNull();
+      assertThat(properties.getValueColumnMetadataMap()).isEmpty();
+
+      verify(mockEngine).getTable(tableName, true);
+    }
+
+    @Test
+    @DisplayName("Test snapshot mode initialization with table instance")
+    void testSnapshotModeInitializationWithTable() {
+      when(mockEngine.getSqlSessionFactory()).thenReturn(mockSqlSessionFactory);
+
+      SCD1Merge.SnapshotModeBuilderImpl builder =
+          (SCD1Merge.SnapshotModeBuilderImpl) SCD1Merge.applySnapshot(mockEngine, mockTable);
+
+      assertThat(builder).extracting("swiftLakeEngine").isEqualTo(mockEngine);
+      assertThat(builder).extracting("table").isEqualTo(mockTable);
+
+      SCD1MergeProperties properties = extractPropertiesFromSnapshotModeBuilder(builder);
+      assertThat(properties.getSqlSessionFactory()).isEqualTo(mockSqlSessionFactory);
+      assertThat(properties.getMode()).isEqualTo(SCD1MergeMode.SNAPSHOT);
+    }
+
+    @Test
+    @DisplayName("Test snapshot mode initialization with batch transaction")
+    void testSnapshotModeInitializationWithBatchTransaction() {
+      when(mockEngine.getSqlSessionFactory()).thenReturn(mockSqlSessionFactory);
+      when(mockTableBatchTransaction.getTable()).thenReturn(mockTable);
+
+      SCD1Merge.SnapshotModeBuilderImpl builder =
+          (SCD1Merge.SnapshotModeBuilderImpl)
+              SCD1Merge.applySnapshot(mockEngine, mockTableBatchTransaction);
+
+      assertThat(builder).extracting("swiftLakeEngine").isEqualTo(mockEngine);
+      assertThat(builder).extracting("table").isEqualTo(mockTable);
+      assertThat(builder).extracting("tableBatchTransaction").isEqualTo(mockTableBatchTransaction);
+
+      SCD1MergeProperties properties = extractPropertiesFromSnapshotModeBuilder(builder);
+      assertThat(properties.getSqlSessionFactory()).isEqualTo(mockSqlSessionFactory);
+      assertThat(properties.getMode()).isEqualTo(SCD1MergeMode.SNAPSHOT);
+    }
+  }
+
+  @Nested
+  @DisplayName("Snapshot Mode Validation Tests")
+  class SnapshotModeValidationTests {
+
+    @Test
+    @DisplayName("Test snapshot mode validation of setting branch on batch transaction")
+    void testSnapshotModeValidationErrorOnBatchTransactionWithBranch() {
+      when(mockTableBatchTransaction.getTable()).thenReturn(mockTable);
+
+      assertThatThrownBy(
+              () ->
+                  SCD1Merge.applySnapshot(mockEngine, mockTableBatchTransaction)
+                      .tableFilter(mockExpression)
+                      .sourceSql(sql)
+                      .keyColumns(keyColumns)
+                      .branch("test-branch"))
+          .isInstanceOf(ValidationException.class)
+          .hasMessageContaining("Set branch name on the batch transaction");
+    }
+
+    @Test
+    @DisplayName("Test snapshot mode validation of setting snapshot metadata on batch transaction")
+    void testSnapshotModeValidationErrorOnBatchTransactionWithMetadata() {
+      when(mockTableBatchTransaction.getTable()).thenReturn(mockTable);
+
+      assertThatThrownBy(
+              () ->
+                  SCD1Merge.applySnapshot(mockEngine, mockTableBatchTransaction)
+                      .tableFilter(mockExpression)
+                      .sourceSql(sql)
+                      .keyColumns(keyColumns)
+                      .snapshotMetadata(Map.of("key", "value")))
+          .isInstanceOf(ValidationException.class)
+          .hasMessageContaining("Set snapshot metadata on the batch transaction");
+    }
+
+    @Test
+    @DisplayName("Test snapshot mode validation of setting isolation level on batch transaction")
+    void testSnapshotModeValidationErrorOnBatchTransactionWithIsolationLevel() {
+      when(mockTableBatchTransaction.getTable()).thenReturn(mockTable);
+
+      assertThatThrownBy(
+              () ->
+                  SCD1Merge.applySnapshot(mockEngine, mockTableBatchTransaction)
+                      .tableFilter(mockExpression)
+                      .sourceSql(sql)
+                      .keyColumns(keyColumns)
+                      .isolationLevel(IsolationLevel.SERIALIZABLE))
+          .isInstanceOf(ValidationException.class)
+          .hasMessageContaining("Set isolation level on the batch transaction");
     }
   }
 
@@ -324,6 +543,19 @@ class SCD1MergeTest {
           SCD1Merge.BuilderImpl.class.getDeclaredField("properties");
       propertiesField.setAccessible(true);
       return (SCD1MergeProperties) propertiesField.get((SCD1Merge.BuilderImpl) builder);
+    } catch (Exception e) {
+      throw new RuntimeException("Failed to access properties field", e);
+    }
+  }
+
+  /** Helper method to access the properties field in the snapshot mode builder using reflection */
+  private SCD1MergeProperties extractPropertiesFromSnapshotModeBuilder(
+      SCD1Merge.SnapshotModeBuilder builder) {
+    try {
+      java.lang.reflect.Field propertiesField =
+          SCD1Merge.SnapshotModeBuilderImpl.class.getDeclaredField("properties");
+      propertiesField.setAccessible(true);
+      return (SCD1MergeProperties) propertiesField.get((SCD1Merge.SnapshotModeBuilderImpl) builder);
     } catch (Exception e) {
       throw new RuntimeException("Failed to access properties field", e);
     }

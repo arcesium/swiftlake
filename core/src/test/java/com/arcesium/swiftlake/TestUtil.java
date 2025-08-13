@@ -15,6 +15,7 @@
  */
 package com.arcesium.swiftlake;
 
+import com.arcesium.swiftlake.common.ValidationException;
 import com.arcesium.swiftlake.expressions.Expressions;
 import com.arcesium.swiftlake.io.SwiftLakeHadoopFileIO;
 import com.arcesium.swiftlake.sql.TableScanResult;
@@ -226,8 +227,15 @@ public class TestUtil {
   }
 
   public static String createChangeSql(List<Map<String, Object>> data, Schema schema) {
+    return createChangeSql(data, schema, "operation_type");
+  }
+
+  public static String createChangeSql(
+      List<Map<String, Object>> data, Schema schema, String operationTypeColumn) {
     List<Types.NestedField> fields = new ArrayList<>(schema.asStruct().fields());
-    fields.add(Types.NestedField.required(1000000, "operation_type", Types.StringType.get()));
+    if (operationTypeColumn != null) {
+      fields.add(Types.NestedField.required(1000000, operationTypeColumn, Types.StringType.get()));
+    }
     return createSelectSql(data, fields);
   }
 
@@ -245,7 +253,17 @@ public class TestUtil {
   }
 
   private static String getColumnProjection(List<Types.NestedField> fields) {
-    return fields.stream().map(f -> f.name()).collect(Collectors.joining(",", "(", ")"));
+    return fields.stream()
+        .map(f -> escapeColumnName(f.name()))
+        .collect(Collectors.joining(",", "(", ")"));
+  }
+
+  public static String escapeColumnName(String columnName) {
+    ValidationException.checkNotNull(columnName, "Column name cannot be null");
+    // Replace any double quotes with escaped double quotes
+    String escaped = columnName.replace("\"", "\"\"");
+    // Wrap with double quotes
+    return "\"" + escaped + "\"";
   }
 
   private static String createValueString(Map<String, Object> row, List<Types.NestedField> fields) {
@@ -466,5 +484,16 @@ public class TestUtil {
     }
 
     return true;
+  }
+
+  /**
+   * Parses a timestamp string in "yyyy-MM-dd HH:mm:ss" format to a LocalDateTime object.
+   *
+   * @param timestamp The timestamp string to parse
+   * @return A LocalDateTime object representing the parsed timestamp
+   */
+  public static LocalDateTime parseTimestamp(String timestamp) {
+    DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    return LocalDateTime.parse(timestamp, formatter);
   }
 }

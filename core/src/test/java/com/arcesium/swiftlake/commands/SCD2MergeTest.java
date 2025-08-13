@@ -27,6 +27,7 @@ import com.arcesium.swiftlake.mybatis.SwiftLakeSqlSessionFactory;
 import com.arcesium.swiftlake.writer.TableBatchTransaction;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -59,7 +60,7 @@ class SCD2MergeTest {
   private String currentFlagColumn = "is_current";
   private String operationTypeColumn = "operation";
   private String deleteOperationValue = "DELETE";
-  private LocalDateTime now = LocalDateTime.now();
+  private LocalDateTime now = LocalDateTime.now().truncatedTo(ChronoUnit.MICROS);
   private String effectiveTimestamp = DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(now);
 
   @BeforeEach
@@ -383,6 +384,44 @@ class SCD2MergeTest {
 
       SCD2MergeProperties properties = extractPropertiesFromSnapshotModeBuilder(builder);
       assertThat(properties.isGenerateEffectiveTimestamp()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Test snapshot mode with change tracking metadata")
+    void testChangeTrackingMetadata() {
+      Map<String, ChangeTrackingMetadata<?>> metadataMap = new HashMap<>();
+      metadataMap.put("name", new ChangeTrackingMetadata<>(10.0, "N/A"));
+      metadataMap.put("value", new ChangeTrackingMetadata<>(5.0, 0));
+
+      SCD2Merge.SnapshotModeBuilder builder =
+          SCD2Merge.applySnapshot(mockEngine, tableName)
+              .tableFilter(mockExpression)
+              .sourceSql(sql)
+              .effectiveTimestamp(effectiveTimestamp)
+              .keyColumns(keyColumns)
+              .effectivePeriodColumns(effectiveStartColumn, effectiveEndColumn)
+              .changeTrackingMetadata(metadataMap);
+
+      SCD2MergeProperties properties = extractPropertiesFromSnapshotModeBuilder(builder);
+      assertThat(properties.getChangeTrackingMetadataMap()).containsAllEntriesOf(metadataMap);
+    }
+
+    @Test
+    @DisplayName("Test snapshot mode with single column change tracking metadata")
+    void testSingleColumnChangeTrackingMetadata() {
+      ChangeTrackingMetadata<Double> metadata = new ChangeTrackingMetadata<>(10.0, null);
+
+      SCD2Merge.SnapshotModeBuilder builder =
+          SCD2Merge.applySnapshot(mockEngine, tableName)
+              .tableFilter(mockExpression)
+              .sourceSql(sql)
+              .effectiveTimestamp(effectiveTimestamp)
+              .keyColumns(keyColumns)
+              .effectivePeriodColumns(effectiveStartColumn, effectiveEndColumn)
+              .changeTrackingMetadata("name", metadata);
+
+      SCD2MergeProperties properties = extractPropertiesFromSnapshotModeBuilder(builder);
+      assertThat(properties.getChangeTrackingMetadataMap()).containsEntry("name", metadata);
     }
   }
 

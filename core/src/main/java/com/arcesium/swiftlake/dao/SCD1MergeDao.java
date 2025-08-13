@@ -41,9 +41,9 @@ public class SCD1MergeDao extends BaseDao {
    *
    * @param properties The SCD1MergeProperties containing configuration for the merge operation.
    */
-  public void mergeFindDiffs(SCD1MergeProperties properties) {
+  public void changesBasedMergeFindDiffs(SCD1MergeProperties properties) {
     try (SqlSession session = getSession()) {
-      session.update(namespace + ".mergeFindDiffs", properties);
+      session.update(namespace + ".changesBasedMergeFindDiffs", properties);
     }
   }
 
@@ -53,8 +53,8 @@ public class SCD1MergeDao extends BaseDao {
    * @param properties The SCD1MergeProperties containing configuration for the merge operation.
    * @return A String containing the SQL for merging changes.
    */
-  public String getMergeUpsertsSql(SCD1MergeProperties properties) {
-    return getSql(namespace + ".mergeUpserts", properties);
+  public String getChangesBasedMergeResultsSql(SCD1MergeProperties properties) {
+    return getSql(namespace + ".changesBasedMergeResults", properties);
   }
 
   /**
@@ -74,9 +74,52 @@ public class SCD1MergeDao extends BaseDao {
    *
    * @param properties The SCD1MergeProperties containing configuration for the operation.
    */
-  public void saveDistinctFileNames(SCD1MergeProperties properties) {
+  public void saveDistinctFileNamesForChangesMerge(SCD1MergeProperties properties) {
     try (SqlSession session = getSession()) {
-      session.update(namespace + ".saveDistinctFileNames", properties);
+      session.update(namespace + ".saveDistinctFileNamesForChangesMerge", properties);
+    }
+  }
+
+  /**
+   * Identifies differences between source and target data for SCD1 snapshot-based merge operation.
+   *
+   * @param properties The SCD1MergeProperties containing configuration for the snapshot merge
+   *     operation.
+   */
+  public void snapshotBasedMergeFindDiffs(SCD1MergeProperties properties) {
+    try (SqlSession session = getSession()) {
+      session.update(namespace + ".snapshotBasedMergeFindDiffs", properties);
+    }
+  }
+
+  /**
+   * Retrieves the SQL for append-only operations in snapshot-based SCD1 merge.
+   *
+   * @param properties The SCD1MergeProperties containing configuration for the operation.
+   * @return A String containing the SQL for append-only operations.
+   */
+  public String getSnapshotBasedMergeAppendOnlySql(SCD1MergeProperties properties) {
+    return getSql(namespace + ".snapshotBasedMergeAppendOnly", properties);
+  }
+
+  /**
+   * Retrieves the SQL for merging snapshot in the SCD1 process.
+   *
+   * @param properties The SCD1MergeProperties containing configuration for the operation.
+   * @return A String containing the SQL for merging snapshot.
+   */
+  public String getSnapshotBasedMergeResultsSql(SCD1MergeProperties properties) {
+    return getSql(namespace + ".snapshotBasedMergeResults", properties);
+  }
+
+  /**
+   * Saves distinct file names for snapshot-based merge based on the provided properties.
+   *
+   * @param properties The SCD1MergeProperties containing configuration for the operation.
+   */
+  public void saveDistinctFileNamesForSnapshotMerge(SCD1MergeProperties properties) {
+    try (SqlSession session = getSession()) {
+      session.update(namespace + ".saveDistinctFileNamesForSnapshotMerge", properties);
     }
   }
 }

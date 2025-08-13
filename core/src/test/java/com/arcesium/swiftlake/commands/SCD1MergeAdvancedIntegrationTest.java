@@ -43,6 +43,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang3.tuple.Pair;
 import org.apache.iceberg.IsolationLevel;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
@@ -53,7 +54,6 @@ import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.types.Types;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -81,8 +81,8 @@ public class SCD1MergeAdvancedIntegrationTest {
   }
 
   @ParameterizedTest
-  @ValueSource(booleans = {true, false})
-  void testProcessSourceTables(boolean isPartitioned) {
+  @CsvSource({"true, true", "true, false", "false, true", "false, false"})
+  void testProcessSourceTables(boolean isPartitioned, boolean isSnapshotMode) {
     TableIdentifier sourceTableId =
         TableIdentifier.of(
             "test_db", "scd1_source_table_" + UUID.randomUUID().toString().replace('-', '_'));
@@ -120,31 +120,51 @@ public class SCD1MergeAdvancedIntegrationTest {
         .processSourceTables(false)
         .execute();
 
-    // Insert data into source table with operation types
+    // Insert data into source table
     List<Map<String, Object>> sourceData =
         Arrays.asList(
             Map.of("id", 1L, "name", "Updated", "value", 150.0),
-            Map.of("id", 3L, "name", "New", "value", 300.0));
+            Map.of("id", 3L, "name", "New", "value", 300.0),
+            Map.of("id", 2L, "name", "Initial", "value", 200.0));
     swiftLakeEngine
         .insertInto(sourceTableName)
         .sql(TestUtil.createSelectSql(sourceData, schema))
         .processSourceTables(false)
         .execute();
 
-    // Apply SCD1 changes with processSourceTables=true
-    swiftLakeEngine
-        .applyChangesAsSCD1(targetTableName)
-        .tableFilterSql("id IS NOT NULL")
-        .sourceSql(
-            "SELECT *, 'U' as operation_type FROM "
-                + sourceTableName
-                + " WHERE id = 1 UNION ALL SELECT *, 'I' as operation_type FROM "
-                + sourceTableName
-                + " WHERE id = 3")
-        .keyColumns(Arrays.asList("id"))
-        .operationTypeColumn("operation_type", "D")
-        .processSourceTables(true)
-        .execute();
+    if (isSnapshotMode) {
+      // Apply SCD1 snapshot with processSourceTables=true
+      // For snapshot mode, include all records that should exist
+      swiftLakeEngine
+          .applySnapshotAsSCD1(targetTableName)
+          .tableFilterSql("id IS NOT NULL")
+          .sourceSql(
+              "SELECT * FROM "
+                  + sourceTableName
+                  + " WHERE id = 1 UNION ALL SELECT * FROM "
+                  + sourceTableName
+                  + " WHERE id = 3 UNION ALL SELECT * FROM "
+                  + sourceTableName
+                  + " WHERE id = 2")
+          .keyColumns(Arrays.asList("id"))
+          .processSourceTables(true)
+          .execute();
+    } else {
+      // Apply SCD1 changes with processSourceTables=true
+      swiftLakeEngine
+          .applyChangesAsSCD1(targetTableName)
+          .tableFilterSql("id IS NOT NULL")
+          .sourceSql(
+              "SELECT *, 'U' as operation_type FROM "
+                  + sourceTableName
+                  + " WHERE id = 1 UNION ALL SELECT *, 'I' as operation_type FROM "
+                  + sourceTableName
+                  + " WHERE id = 3")
+          .keyColumns(Arrays.asList("id"))
+          .operationTypeColumn("operation_type", "D")
+          .processSourceTables(true)
+          .execute();
+    }
 
     // Verify the changes were applied correctly
     List<Map<String, Object>> expectedData =
@@ -164,8 +184,9 @@ public class SCD1MergeAdvancedIntegrationTest {
     TestUtil.dropIcebergTable(swiftLakeEngine, targetTableName);
   }
 
-  @Test
-  void testExecuteSqlOnceOnly() {
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void testExecuteSqlOnceOnly(boolean isSnapshotMode) {
     TableIdentifier tableId =
         TableIdentifier.of(
             "test_db",
@@ -193,25 +214,47 @@ public class SCD1MergeAdvancedIntegrationTest {
         .processSourceTables(false)
         .execute();
 
-    List<Map<String, Object>> changes =
-        Arrays.asList(
-            Map.of("id", 1L, "value", "updated-value-1", "operation_type", "U"),
-            Map.of("id", 3L, "value", "to-be-deleted", "operation_type", "D"),
-            Map.of("id", 4L, "value", "new-value-4", "operation_type", "I"));
+    if (isSnapshotMode) {
+      // Use snapshot mode where we specify all desired records
+      List<Map<String, Object>> snapshot =
+          Arrays.asList(
+              Map.of("id", 1L, "value", "updated-value-1"),
+              Map.of("id", 2L, "value", "initial-value-2"),
+              Map.of("id", 4L, "value", "new-value-4"));
 
-    String changesSql = TestUtil.createChangeSql(changes, schema);
+      String snapshotSql = TestUtil.createSelectSql(snapshot, schema);
 
-    // Apply SCD1 changes with executeSqlOnceOnly=true
-    long startTimeWithOnceOnly = System.currentTimeMillis();
-    swiftLakeEngine
-        .applyChangesAsSCD1(tableName)
-        .tableFilterSql("id IS NOT NULL")
-        .sourceSql(changesSql)
-        .keyColumns(Arrays.asList("id"))
-        .operationTypeColumn("operation_type", "D")
-        .executeSourceSqlOnceOnly(true)
-        .processSourceTables(false)
-        .execute();
+      // Apply SCD1 snapshot with executeSqlOnceOnly=true
+      swiftLakeEngine
+          .applySnapshotAsSCD1(tableName)
+          .tableFilterSql("id IS NOT NULL")
+          .sourceSql(snapshotSql)
+          .keyColumns(Arrays.asList("id"))
+          .executeSourceSqlOnceOnly(true)
+          .processSourceTables(false)
+          .execute();
+
+    } else {
+      // Use changes mode
+      List<Map<String, Object>> changes =
+          Arrays.asList(
+              Map.of("id", 1L, "value", "updated-value-1", "operation_type", "U"),
+              Map.of("id", 3L, "value", "to-be-deleted", "operation_type", "D"),
+              Map.of("id", 4L, "value", "new-value-4", "operation_type", "I"));
+
+      String changesSql = TestUtil.createChangeSql(changes, schema);
+
+      // Apply SCD1 changes with executeSqlOnceOnly=true
+      swiftLakeEngine
+          .applyChangesAsSCD1(tableName)
+          .tableFilterSql("id IS NOT NULL")
+          .sourceSql(changesSql)
+          .keyColumns(Arrays.asList("id"))
+          .operationTypeColumn("operation_type", "D")
+          .executeSourceSqlOnceOnly(true)
+          .processSourceTables(false)
+          .execute();
+    }
 
     // Verify results
     List<Map<String, Object>> actualData = TestUtil.getRecordsFromTable(swiftLakeEngine, tableName);
@@ -237,8 +280,9 @@ public class SCD1MergeAdvancedIntegrationTest {
     TestUtil.dropIcebergTable(swiftLakeEngine, tableName);
   }
 
-  @Test
-  void testSourceMybatisStatement() {
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void testSourceMybatisStatement(boolean isSnapshotMode) {
     TableIdentifier tableId =
         TableIdentifier.of(
             "test_db", "scd1_mybatis_test_" + UUID.randomUUID().toString().replace('-', '_'));
@@ -277,16 +321,33 @@ public class SCD1MergeAdvancedIntegrationTest {
     params.put("name2", "New");
     params.put("value2", 300.0);
 
-    // Apply SCD1 changes using a MyBatis statement
-    swiftLakeEngine
-        .applyChangesAsSCD1(tableName)
-        .tableFilterSql("id IS NOT NULL")
-        .sourceMybatisStatement("TestMapper.getChangeData", params)
-        .keyColumns(Arrays.asList("id"))
-        .operationTypeColumn("operation_type", "D")
-        .processSourceTables(false)
-        .sqlSessionFactory(sqlSessionFactory)
-        .execute();
+    if (isSnapshotMode) {
+      // Include all desired records in snapshot
+      params.put("id3", 2L); // Keep this record from the initial data
+      params.put("name3", "Initial");
+      params.put("value3", 200.0);
+
+      // Apply SCD1 snapshot using a MyBatis statement
+      swiftLakeEngine
+          .applySnapshotAsSCD1(tableName)
+          .tableFilterSql("id IS NOT NULL")
+          .sourceMybatisStatement("TestMapper.getSnapshotData", params)
+          .keyColumns(Arrays.asList("id"))
+          .processSourceTables(false)
+          .sqlSessionFactory(sqlSessionFactory)
+          .execute();
+    } else {
+      // Apply SCD1 changes using a MyBatis statement
+      swiftLakeEngine
+          .applyChangesAsSCD1(tableName)
+          .tableFilterSql("id IS NOT NULL")
+          .sourceMybatisStatement("TestMapper.getChangeData", params)
+          .keyColumns(Arrays.asList("id"))
+          .operationTypeColumn("operation_type", "D")
+          .processSourceTables(false)
+          .sqlSessionFactory(sqlSessionFactory)
+          .execute();
+    }
 
     // Verify the changes were applied correctly
     List<Map<String, Object>> expectedData =
@@ -305,8 +366,18 @@ public class SCD1MergeAdvancedIntegrationTest {
   }
 
   @ParameterizedTest
-  @CsvSource({"true, true", "true, false", "false, true", "false, false"})
-  void testTableFilterAndFilterSql(boolean isPartitioned, boolean isExpression) {
+  @CsvSource({
+    "true, true, true",
+    "true, false, true",
+    "false, true, true",
+    "false, false, true",
+    "true, true, false",
+    "true, false, false",
+    "false, true, false",
+    "false, false, false"
+  })
+  void testTableFilterAndFilterSql(
+      boolean isPartitioned, boolean isExpression, boolean isSnapshotMode) {
     Schema schema =
         new Schema(
             Types.NestedField.required(1, "id", Types.LongType.get()),
@@ -343,35 +414,68 @@ public class SCD1MergeAdvancedIntegrationTest {
         .processSourceTables(false)
         .execute();
 
-    // Changes data for all regions
-    List<Map<String, Object>> changes =
-        Arrays.asList(
-            Map.of("id", 1L, "region", "US", "value", 110.0, "operation_type", "U"),
-            Map.of("id", 3L, "region", "EU", "value", 330.0, "operation_type", "U"),
-            Map.of("id", 5L, "region", "ASIA", "value", 550.0, "operation_type", "U"),
-            Map.of("id", 7L, "region", "US", "value", 700.0, "operation_type", "I"));
-    String changesSql = TestUtil.createChangeSql(changes, schema);
+    if (isSnapshotMode) {
+      // Snapshot data - include all desired records for the US region
+      List<Map<String, Object>> snapshotData =
+          Arrays.asList(
+              Map.of("id", 1L, "region", "US", "value", 110.0), // Updated
+              Map.of("id", 2L, "region", "US", "value", 200.0), // No change
+              Map.of("id", 3L, "region", "EU", "value", 330.0),
+              Map.of("id", 5L, "region", "ASIA", "value", 550.0),
+              Map.of("id", 7L, "region", "US", "value", 700.0)); // New record
 
-    // Apply SCD1 changes with a table filter for only US region
-    if (isExpression) {
-      swiftLakeEngine
-          .applyChangesAsSCD1(tableName)
-          .tableFilter(Expressions.equal("region", "US"))
-          .sourceSql(changesSql)
-          .keyColumns(Arrays.asList("id", "region"))
-          .operationTypeColumn("operation_type", "D")
-          .processSourceTables(false)
-          .execute();
+      String snapshotSql = TestUtil.createSelectSql(snapshotData, schema);
+
+      // Apply SCD1 snapshot with a table filter for only US region
+      if (isExpression) {
+        swiftLakeEngine
+            .applySnapshotAsSCD1(tableName)
+            .tableFilter(Expressions.equal("region", "US"))
+            .sourceSql(snapshotSql)
+            .keyColumns(Arrays.asList("id", "region"))
+            .processSourceTables(false)
+            .execute();
+      } else {
+        swiftLakeEngine
+            .applySnapshotAsSCD1(tableName)
+            .tableFilterSql("region = 'US'")
+            .sourceSql(snapshotSql)
+            .keyColumns(Arrays.asList("id", "region"))
+            .processSourceTables(false)
+            .execute();
+      }
     } else {
-      swiftLakeEngine
-          .applyChangesAsSCD1(tableName)
-          .tableFilterSql("region = 'US'")
-          .sourceSql(changesSql)
-          .keyColumns(Arrays.asList("id", "region"))
-          .operationTypeColumn("operation_type", "D")
-          .processSourceTables(false)
-          .execute();
+      // Changes data for all regions
+      List<Map<String, Object>> changes =
+          Arrays.asList(
+              Map.of("id", 1L, "region", "US", "value", 110.0, "operation_type", "U"),
+              Map.of("id", 3L, "region", "EU", "value", 330.0, "operation_type", "U"),
+              Map.of("id", 5L, "region", "ASIA", "value", 550.0, "operation_type", "U"),
+              Map.of("id", 7L, "region", "US", "value", 700.0, "operation_type", "I"));
+      String changesSql = TestUtil.createChangeSql(changes, schema);
+
+      // Apply SCD1 changes with a table filter for only US region
+      if (isExpression) {
+        swiftLakeEngine
+            .applyChangesAsSCD1(tableName)
+            .tableFilter(Expressions.equal("region", "US"))
+            .sourceSql(changesSql)
+            .keyColumns(Arrays.asList("id", "region"))
+            .operationTypeColumn("operation_type", "D")
+            .processSourceTables(false)
+            .execute();
+      } else {
+        swiftLakeEngine
+            .applyChangesAsSCD1(tableName)
+            .tableFilterSql("region = 'US'")
+            .sourceSql(changesSql)
+            .keyColumns(Arrays.asList("id", "region"))
+            .operationTypeColumn("operation_type", "D")
+            .processSourceTables(false)
+            .execute();
+      }
     }
+
     // Verify only US region records were updated
     List<Map<String, Object>> expectedData =
         Arrays.asList(
@@ -527,8 +631,8 @@ public class SCD1MergeAdvancedIntegrationTest {
   }
 
   @ParameterizedTest
-  @ValueSource(booleans = {true, false})
-  void testColumns(boolean isPartitioned) {
+  @CsvSource({"true, true", "true, false", "false, true", "false, false"})
+  void testColumns(boolean isPartitioned, boolean isSnapshotMode) {
     Schema schema =
         new Schema(
             Types.NestedField.required(1, "id", Types.LongType.get()),
@@ -577,31 +681,60 @@ public class SCD1MergeAdvancedIntegrationTest {
         .processSourceTables(false)
         .execute();
 
-    // Changes data - only updating some columns
-    List<Map<String, Object>> changes =
-        Arrays.asList(
-            Map.of(
-                "id", 1L,
-                "name", "John Doe",
-                "email", "john.doe@example.com",
-                "operation_type", "U"),
-            Map.of(
-                "id", 3L,
-                "name", "Bob",
-                "email", "bob@example.com",
-                "operation_type", "I"));
-    String changesSql = TestUtil.createChangeSql(changes, schema);
+    if (isSnapshotMode) {
+      // Changes data - only updating some columns
+      List<Map<String, Object>> snapshot =
+          Arrays.asList(
+              Map.of(
+                  "id", 1L,
+                  "name", "John Doe",
+                  "email", "john.doe@example.com"),
+              Map.of(
+                  "id", 2L,
+                  "name", "Jane",
+                  "email", "jane@example.com"),
+              Map.of(
+                  "id", 3L,
+                  "name", "Bob",
+                  "email", "bob@example.com"));
+      String snapshotSql = TestUtil.createSelectSql(snapshot, schema);
 
-    // Apply SCD1 changes with only specific columns
-    swiftLakeEngine
-        .applyChangesAsSCD1(tableName)
-        .tableFilterSql("id IS NOT NULL")
-        .sourceSql(changesSql)
-        .keyColumns(Arrays.asList("id"))
-        .operationTypeColumn("operation_type", "D")
-        .columns(Arrays.asList("id", "name", "email")) // Only update these columns
-        .processSourceTables(false)
-        .execute();
+      // Apply SCD1 changes with only specific columns
+      swiftLakeEngine
+          .applySnapshotAsSCD1(tableName)
+          .tableFilterSql("id IS NOT NULL")
+          .sourceSql(snapshotSql)
+          .keyColumns(Arrays.asList("id"))
+          .columns(Arrays.asList("id", "name", "email")) // Only update these columns
+          .processSourceTables(false)
+          .execute();
+    } else {
+      // Changes data - only updating some columns
+      List<Map<String, Object>> changes =
+          Arrays.asList(
+              Map.of(
+                  "id", 1L,
+                  "name", "John Doe",
+                  "email", "john.doe@example.com",
+                  "operation_type", "U"),
+              Map.of(
+                  "id", 3L,
+                  "name", "Bob",
+                  "email", "bob@example.com",
+                  "operation_type", "I"));
+      String changesSql = TestUtil.createChangeSql(changes, schema);
+
+      // Apply SCD1 changes with only specific columns
+      swiftLakeEngine
+          .applyChangesAsSCD1(tableName)
+          .tableFilterSql("id IS NOT NULL")
+          .sourceSql(changesSql)
+          .keyColumns(Arrays.asList("id"))
+          .operationTypeColumn("operation_type", "D")
+          .columns(Arrays.asList("id", "name", "email")) // Only update these columns
+          .processSourceTables(false)
+          .execute();
+    }
 
     // Verify only specified columns were updated, others get null values
     List<Map<String, Object>> expectedData =
@@ -620,8 +753,8 @@ public class SCD1MergeAdvancedIntegrationTest {
                 put("id", 2L);
                 put("name", "Jane");
                 put("email", "jane@example.com");
-                put("phone", "234-567-8901");
-                put("value", 200.0);
+                put("phone", isSnapshotMode ? null : "234-567-8901");
+                put("value", isSnapshotMode ? null : 200.0);
               }
             },
             new HashMap<String, Object>() {
@@ -643,8 +776,9 @@ public class SCD1MergeAdvancedIntegrationTest {
     TestUtil.dropIcebergTable(swiftLakeEngine, tableName);
   }
 
-  @Test
-  void testTableBatchTransaction() {
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void testTableBatchTransaction(boolean isSnapshotMode) {
     Schema schema =
         new Schema(
             Types.NestedField.required(1, "id", Types.LongType.get()),
@@ -673,98 +807,138 @@ public class SCD1MergeAdvancedIntegrationTest {
 
     // Create multiple batches of changes
     List<List<Map<String, Object>>> changeBatches = new ArrayList<>();
+    List<Pair<String, List<Map<String, Object>>>> snapshotBatches = new ArrayList<>();
 
-    // Batch 1: Update records
-    changeBatches.add(
-        Arrays.asList(
-            Map.of(
-                "id",
-                1L,
-                "name",
-                "John Doe",
-                "department",
-                "HR",
-                "salary",
-                55000.0,
-                "operation_type",
-                "U"),
-            Map.of(
-                "id",
-                2L,
-                "name",
-                "Jane Doe",
-                "department",
-                "IT",
-                "salary",
-                65000.0,
-                "operation_type",
-                "U")));
+    if (isSnapshotMode) {
+      // Batch 1: Update records
+      snapshotBatches.add(
+          Pair.of(
+              "department IN ('HR', 'IT')",
+              Arrays.asList(
+                  Map.of("id", 1L, "name", "John Doe", "department", "HR", "salary", 55000.0),
+                  Map.of("id", 2L, "name", "Jane Doe", "department", "IT", "salary", 65000.0))));
 
-    // Batch 2: Insert new records
-    changeBatches.add(
-        Arrays.asList(
-            Map.of(
-                "id",
-                4L,
-                "name",
-                "Alice",
-                "department",
-                "Marketing",
-                "salary",
-                52000.0,
-                "operation_type",
-                "I"),
-            Map.of(
-                "id",
-                5L,
-                "name",
-                "Charlie",
-                "department",
-                "Sales",
-                "salary",
-                58000.0,
-                "operation_type",
-                "I")));
+      // Batch 2: Insert new records
+      snapshotBatches.add(
+          Pair.of(
+              "department IN ('Marketing', 'Sales')",
+              Arrays.asList(
+                  Map.of("id", 4L, "name", "Alice", "department", "Marketing", "salary", 52000.0),
+                  Map.of("id", 5L, "name", "Charlie", "department", "Sales", "salary", 58000.0))));
 
-    // Batch 3: Delete a record
-    changeBatches.add(
-        Arrays.asList(
-            Map.of(
-                "id",
-                3L,
-                "name",
-                "Bob",
-                "department",
-                "Finance",
-                "salary",
-                55000.0,
-                "operation_type",
-                "D")));
+      // Batch 3: Delete a record
+      snapshotBatches.add(Pair.of("department='Finance'", List.of()));
+    } else {
+      // Batch 1: Update records
+      changeBatches.add(
+          Arrays.asList(
+              Map.of(
+                  "id",
+                  1L,
+                  "name",
+                  "John Doe",
+                  "department",
+                  "HR",
+                  "salary",
+                  55000.0,
+                  "operation_type",
+                  "U"),
+              Map.of(
+                  "id",
+                  2L,
+                  "name",
+                  "Jane Doe",
+                  "department",
+                  "IT",
+                  "salary",
+                  65000.0,
+                  "operation_type",
+                  "U")));
+
+      // Batch 2: Insert new records
+      changeBatches.add(
+          Arrays.asList(
+              Map.of(
+                  "id",
+                  4L,
+                  "name",
+                  "Alice",
+                  "department",
+                  "Marketing",
+                  "salary",
+                  52000.0,
+                  "operation_type",
+                  "I"),
+              Map.of(
+                  "id",
+                  5L,
+                  "name",
+                  "Charlie",
+                  "department",
+                  "Sales",
+                  "salary",
+                  58000.0,
+                  "operation_type",
+                  "I")));
+
+      // Batch 3: Delete a record
+      changeBatches.add(
+          Arrays.asList(
+              Map.of(
+                  "id",
+                  3L,
+                  "name",
+                  "Bob",
+                  "department",
+                  "Finance",
+                  "salary",
+                  55000.0,
+                  "operation_type",
+                  "D")));
+    }
 
     // Create a TableBatchTransaction
     TableBatchTransaction transaction =
         TableBatchTransaction.builderFor(swiftLakeEngine, tableName).build();
 
     // Process batches in parallel using multiple threads
-    ExecutorService executorService = Executors.newFixedThreadPool(changeBatches.size());
+    ExecutorService executorService =
+        Executors.newFixedThreadPool(
+            isSnapshotMode ? snapshotBatches.size() : changeBatches.size());
     List<Future<?>> futures = new ArrayList<>();
 
-    for (List<Map<String, Object>> batch : changeBatches) {
-      futures.add(
-          executorService.submit(
-              () -> {
-                String changeSql = TestUtil.createChangeSql(batch, schema);
-                swiftLakeEngine
-                    .applyChangesAsSCD1(transaction)
-                    .tableFilterColumns(Arrays.asList("department"))
-                    .sourceSql(changeSql)
-                    .keyColumns(Arrays.asList("id", "department"))
-                    .operationTypeColumn("operation_type", "D")
-                    .processSourceTables(false)
-                    .execute();
-              }));
+    if (isSnapshotMode) {
+      for (Pair<String, List<Map<String, Object>>> batch : snapshotBatches) {
+        futures.add(
+            executorService.submit(
+                () -> {
+                  String snapshotSql = TestUtil.createSelectSql(batch.getRight(), schema);
+                  swiftLakeEngine
+                      .applySnapshotAsSCD1(transaction)
+                      .tableFilterSql(batch.getLeft())
+                      .sourceSql(snapshotSql)
+                      .keyColumns(Arrays.asList("id", "department"))
+                      .processSourceTables(false)
+                      .execute();
+                }));
+      }
+    } else {
+      for (List<Map<String, Object>> batch : changeBatches) {
+        futures.add(
+            executorService.submit(
+                () -> {
+                  String changeSql = TestUtil.createChangeSql(batch, schema);
+                  swiftLakeEngine
+                      .applyChangesAsSCD1(transaction)
+                      .tableFilterColumns(Arrays.asList("department"))
+                      .sourceSql(changeSql)
+                      .keyColumns(Arrays.asList("id", "department"))
+                      .operationTypeColumn("operation_type", "D")
+                      .processSourceTables(false)
+                      .execute();
+                }));
+      }
     }
-
     // Wait for all batches to complete
     for (Future<?> future : futures) {
       try {
@@ -798,8 +972,9 @@ public class SCD1MergeAdvancedIntegrationTest {
     TestUtil.dropIcebergTable(swiftLakeEngine, tableName);
   }
 
-  @Test
-  void testBranch() {
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void testBranch(boolean isSnapshotMode) {
     Schema schema =
         new Schema(
             Types.NestedField.required(1, "id", Types.LongType.get()),
@@ -832,38 +1007,72 @@ public class SCD1MergeAdvancedIntegrationTest {
     table.manageSnapshots().createBranch(branchName, mainSnapshotId).commit();
 
     // Apply changes on the main branch
-    List<Map<String, Object>> mainChanges =
-        Arrays.asList(
-            Map.of("id", 1L, "name", "Updated-Main", "value", 150.0, "operation_type", "U"),
-            Map.of("id", 3L, "name", "New-Main", "value", 300.0, "operation_type", "I"));
+    if (isSnapshotMode) {
+      List<Map<String, Object>> snapshot =
+          Arrays.asList(
+              Map.of("id", 1L, "name", "Updated-Main", "value", 150.0),
+              Map.of("id", 3L, "name", "New-Main", "value", 300.0),
+              Map.of("id", 2L, "name", "Initial2", "value", 200.0));
 
-    String mainChangesSql = TestUtil.createChangeSql(mainChanges, schema);
-    swiftLakeEngine
-        .applyChangesAsSCD1(tableName)
-        .tableFilterSql("id IS NOT NULL")
-        .sourceSql(mainChangesSql)
-        .keyColumns(Arrays.asList("id"))
-        .operationTypeColumn("operation_type", "D")
-        .processSourceTables(false)
-        .execute();
+      String snapshotSql = TestUtil.createSelectSql(snapshot, schema);
+      swiftLakeEngine
+          .applySnapshotAsSCD1(tableName)
+          .tableFilterSql("id IS NOT NULL")
+          .sourceSql(snapshotSql)
+          .keyColumns(Arrays.asList("id"))
+          .processSourceTables(false)
+          .execute();
+    } else {
+      List<Map<String, Object>> mainChanges =
+          Arrays.asList(
+              Map.of("id", 1L, "name", "Updated-Main", "value", 150.0, "operation_type", "U"),
+              Map.of("id", 3L, "name", "New-Main", "value", 300.0, "operation_type", "I"));
+
+      String mainChangesSql = TestUtil.createChangeSql(mainChanges, schema);
+      swiftLakeEngine
+          .applyChangesAsSCD1(tableName)
+          .tableFilterSql("id IS NOT NULL")
+          .sourceSql(mainChangesSql)
+          .keyColumns(Arrays.asList("id"))
+          .operationTypeColumn("operation_type", "D")
+          .processSourceTables(false)
+          .execute();
+    }
 
     // Apply different changes on the test-branch
-    List<Map<String, Object>> branchChanges =
-        Arrays.asList(
-            Map.of("id", 1L, "name", "Updated-Branch", "value", 160.0, "operation_type", "U"),
-            Map.of("id", 4L, "name", "New-Branch", "value", 400.0, "operation_type", "I"));
+    if (isSnapshotMode) {
+      List<Map<String, Object>> branchSnapshot =
+          Arrays.asList(
+              Map.of("id", 1L, "name", "Updated-Branch", "value", 160.0),
+              Map.of("id", 4L, "name", "New-Branch", "value", 400.0),
+              Map.of("id", 2L, "name", "Initial2", "value", 200.0));
 
-    String branchChangesSql = TestUtil.createChangeSql(branchChanges, schema);
-    swiftLakeEngine
-        .applyChangesAsSCD1(tableName)
-        .tableFilterSql("id IS NOT NULL")
-        .sourceSql(branchChangesSql)
-        .keyColumns(Arrays.asList("id"))
-        .operationTypeColumn("operation_type", "D")
-        .branch(branchName)
-        .processSourceTables(false)
-        .execute();
+      String branchSnapshotSql = TestUtil.createSelectSql(branchSnapshot, schema);
+      swiftLakeEngine
+          .applySnapshotAsSCD1(tableName)
+          .tableFilterSql("id IS NOT NULL")
+          .sourceSql(branchSnapshotSql)
+          .keyColumns(Arrays.asList("id"))
+          .branch(branchName)
+          .processSourceTables(false)
+          .execute();
+    } else {
+      List<Map<String, Object>> branchChanges =
+          Arrays.asList(
+              Map.of("id", 1L, "name", "Updated-Branch", "value", 160.0, "operation_type", "U"),
+              Map.of("id", 4L, "name", "New-Branch", "value", 400.0, "operation_type", "I"));
 
+      String branchChangesSql = TestUtil.createChangeSql(branchChanges, schema);
+      swiftLakeEngine
+          .applyChangesAsSCD1(tableName)
+          .tableFilterSql("id IS NOT NULL")
+          .sourceSql(branchChangesSql)
+          .keyColumns(Arrays.asList("id"))
+          .operationTypeColumn("operation_type", "D")
+          .branch(branchName)
+          .processSourceTables(false)
+          .execute();
+    }
     // Check main branch data
     List<Map<String, Object>> mainBranchData =
         TestUtil.getRecordsFromTable(swiftLakeEngine, tableName);
@@ -888,21 +1097,38 @@ public class SCD1MergeAdvancedIntegrationTest {
                 Map.of("id", 2L, "name", "Initial2", "value", 200.0),
                 Map.of("id", 4L, "name", "New-Branch", "value", 400.0)));
 
-    // Test reading from a branch using SCD1 merge
-    List<Map<String, Object>> finalChanges =
-        Arrays.asList(
-            Map.of("id", 2L, "name", "Updated-Final", "value", 250.0, "operation_type", "U"));
+    if (isSnapshotMode) {
+      List<Map<String, Object>> finalBranchSnapshot =
+          Arrays.asList(
+              Map.of("id", 2L, "name", "Updated-Final", "value", 250.0),
+              Map.of("id", 1L, "name", "Updated-Branch", "value", 160.0),
+              Map.of("id", 4L, "name", "New-Branch", "value", 400.0));
 
-    String finalChangesSql = TestUtil.createChangeSql(finalChanges, schema);
-    swiftLakeEngine
-        .applyChangesAsSCD1(tableName)
-        .tableFilterSql("id IS NOT NULL")
-        .sourceSql(finalChangesSql)
-        .keyColumns(Arrays.asList("id"))
-        .operationTypeColumn("operation_type", "D")
-        .branch(branchName) // Use the branch for input
-        .processSourceTables(false)
-        .execute();
+      String finalSnapshotSql = TestUtil.createSelectSql(finalBranchSnapshot, schema);
+      swiftLakeEngine
+          .applySnapshotAsSCD1(tableName)
+          .tableFilterSql("id IS NOT NULL")
+          .sourceSql(finalSnapshotSql)
+          .keyColumns(Arrays.asList("id"))
+          .branch(branchName) // Use the branch for input
+          .processSourceTables(false)
+          .execute();
+    } else {
+      List<Map<String, Object>> finalChanges =
+          Arrays.asList(
+              Map.of("id", 2L, "name", "Updated-Final", "value", 250.0, "operation_type", "U"));
+
+      String finalChangesSql = TestUtil.createChangeSql(finalChanges, schema);
+      swiftLakeEngine
+          .applyChangesAsSCD1(tableName)
+          .tableFilterSql("id IS NOT NULL")
+          .sourceSql(finalChangesSql)
+          .keyColumns(Arrays.asList("id"))
+          .operationTypeColumn("operation_type", "D")
+          .branch(branchName) // Use the branch for input
+          .processSourceTables(false)
+          .execute();
+    }
 
     // Verify changes were applied to the branch
     List<Map<String, Object>> finalBranchData =
@@ -921,8 +1147,8 @@ public class SCD1MergeAdvancedIntegrationTest {
   }
 
   @ParameterizedTest
-  @ValueSource(booleans = {true, false})
-  void testSkipDataSortingSCD1(boolean isPartitioned) throws Exception {
+  @CsvSource({"true, true", "true, false", "false, true", "false, false"})
+  void testSkipDataSortingSCD1(boolean isPartitioned, boolean isSnapshotMode) throws Exception {
     Schema schema =
         new Schema(
             Types.NestedField.required(1, "id", Types.IntegerType.get()),
@@ -980,6 +1206,7 @@ public class SCD1MergeAdvancedIntegrationTest {
 
     // Prepare SCD1 changes (update some records, add new ones)
     List<Map<String, Object>> changes = new ArrayList<>();
+    List<Map<String, Object>> snapshot = new ArrayList<>();
     // Updates for some existing records
     for (int i = 10; i <= 40; i += 10) {
       Map<String, Object> record = new HashMap<>();
@@ -988,6 +1215,7 @@ public class SCD1MergeAdvancedIntegrationTest {
       record.put("value", "updated_" + String.format("%03d", i));
       record.put("operation_type", "U");
       changes.add(record);
+      snapshot.add(record);
     }
 
     // New records with higher IDs in reverse order
@@ -998,6 +1226,7 @@ public class SCD1MergeAdvancedIntegrationTest {
       record.put("value", "new_" + String.format("%03d", i));
       record.put("operation_type", "I");
       changes.add(record);
+      snapshot.add(record);
     }
 
     // Expected data after merge
@@ -1011,6 +1240,7 @@ public class SCD1MergeAdvancedIntegrationTest {
         record.put("sort_key", i);
         record.put("value", "initial_" + String.format("%03d", i));
         expectedRecords.add(record);
+        snapshot.add(record);
       }
     }
 
@@ -1036,18 +1266,32 @@ public class SCD1MergeAdvancedIntegrationTest {
     List<Map<String, Object>> expectedSortedRecords = new ArrayList<>(expectedRecords);
     expectedSortedRecords.sort(Comparator.comparing(m -> (Integer) m.get("sort_key")));
 
-    // Apply SCD1 changes with skipDataSorting=true
-    String changesSql = TestUtil.createChangeSql(changes, schema);
-    swiftLakeEngine
-        .applyChangesAsSCD1(tableName)
-        .tableFilterSql("id IS NOT NULL")
-        .sourceSql(changesSql)
-        .keyColumns(Arrays.asList("id"))
-        .operationTypeColumn("operation_type", "D")
-        .skipDataSorting(true)
-        .processSourceTables(false)
-        .execute();
-
+    String sourceSql =
+        isSnapshotMode
+            ? TestUtil.createSelectSql(snapshot, schema)
+            : TestUtil.createChangeSql(changes, schema);
+    if (isSnapshotMode) {
+      // Apply SCD1 snapshot with skipDataSorting=true
+      swiftLakeEngine
+          .applySnapshotAsSCD1(tableName)
+          .tableFilterSql("id IS NOT NULL")
+          .sourceSql(sourceSql)
+          .keyColumns(Arrays.asList("id"))
+          .skipDataSorting(true)
+          .processSourceTables(false)
+          .execute();
+    } else {
+      // Apply SCD1 changes with skipDataSorting=true
+      swiftLakeEngine
+          .applyChangesAsSCD1(tableName)
+          .tableFilterSql("id IS NOT NULL")
+          .sourceSql(sourceSql)
+          .keyColumns(Arrays.asList("id"))
+          .operationTypeColumn("operation_type", "D")
+          .skipDataSorting(true)
+          .processSourceTables(false)
+          .execute();
+    }
     // Read the data in file order
     List<Map<String, Object>> actualRecordsWithSkipSorting =
         TestUtil.getRecordsFromTableInFileOrder(swiftLakeEngine, tableName);
@@ -1082,17 +1326,28 @@ public class SCD1MergeAdvancedIntegrationTest {
         .processSourceTables(false)
         .execute();
 
-    // Apply SCD1 changes with skipDataSorting=false
-    swiftLakeEngine
-        .applyChangesAsSCD1(tableName)
-        .tableFilterSql("id IS NOT NULL")
-        .sourceSql(changesSql)
-        .keyColumns(Arrays.asList("id"))
-        .operationTypeColumn("operation_type", "D")
-        .skipDataSorting(false)
-        .processSourceTables(false)
-        .execute();
-
+    if (isSnapshotMode) {
+      // Apply SCD1 snapshot with skipDataSorting=false
+      swiftLakeEngine
+          .applySnapshotAsSCD1(tableName)
+          .tableFilterSql("id IS NOT NULL")
+          .sourceSql(sourceSql)
+          .keyColumns(Arrays.asList("id"))
+          .skipDataSorting(false)
+          .processSourceTables(false)
+          .execute();
+    } else {
+      // Apply SCD1 changes with skipDataSorting=false
+      swiftLakeEngine
+          .applyChangesAsSCD1(tableName)
+          .tableFilterSql("id IS NOT NULL")
+          .sourceSql(sourceSql)
+          .keyColumns(Arrays.asList("id"))
+          .operationTypeColumn("operation_type", "D")
+          .skipDataSorting(false)
+          .processSourceTables(false)
+          .execute();
+    }
     // Read the data in file order
     List<Map<String, Object>> actualRecordsWithoutSkipSorting =
         TestUtil.getRecordsFromTableInFileOrder(swiftLakeEngine, tableName);
@@ -1114,8 +1369,9 @@ public class SCD1MergeAdvancedIntegrationTest {
     TestUtil.dropIcebergTable(swiftLakeEngine, tableName);
   }
 
-  @Test
-  public void testSCD1MergeWithDifferentIsolationLevels() {
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  public void testSCD1MergeWithDifferentIsolationLevels(boolean isSnapshotMode) {
     Schema schema =
         new Schema(
             Types.NestedField.required(1, "id", Types.LongType.get()),
@@ -1167,115 +1423,206 @@ public class SCD1MergeAdvancedIntegrationTest {
         .isNotEqualTo(snapshotIdAfterInitialInsert);
 
     // Prepare SCD1 changes that will update ID=1 and insert a new record
-    List<Map<String, Object>> initialChanges =
-        Arrays.asList(
-            Map.of("id", 1L, "year", 2023, "value", "updated_2023_value", "operation_type", "U"),
-            Map.of("id", 4L, "year", 2025, "value", "new_2025_value", "operation_type", "I"));
-    String initialChangesSql = TestUtil.createChangeSql(initialChanges, schema);
+    if (isSnapshotMode) {
+      List<Map<String, Object>> initialChanges =
+          Arrays.asList(
+              Map.of("id", 1L, "year", 2023, "value", "updated_2023_value"),
+              Map.of("id", 4L, "year", 2025, "value", "new_2025_value"));
+      String initialSnapshotSql = TestUtil.createSelectSql(initialChanges, schema);
 
-    // Attempt to apply changes with default isolation level should succeed
-    // since we're not targeting the same partition that has been modified
-    swiftLakeEngine
-        .applyChangesAsSCD1(tableName)
-        .tableFilterSql("id IS NOT NULL")
-        .sourceSql(initialChangesSql)
-        .keyColumns(Arrays.asList("id"))
-        .operationTypeColumn("operation_type", "D")
-        .processSourceTables(false)
-        .execute();
+      // Attempt to apply snapshot with default isolation level should succeed
+      // since we're not targeting the same partition that has been modified
+      swiftLakeEngine
+          .applySnapshotAsSCD1(tableName)
+          .tableFilterSql("id IS NOT NULL")
+          .sourceSql(initialSnapshotSql)
+          .keyColumns(Arrays.asList("id"))
+          .processSourceTables(false)
+          .execute();
 
-    // Prepare changes that will affect the 2024 partition (which has conflicts)
-    List<Map<String, Object>> conflictingChanges =
-        Arrays.asList(
-            Map.of("id", 2L, "year", 2024, "value", "updated_2024_value", "operation_type", "U"),
-            Map.of("id", 3L, "year", 2024, "value", "deleted_value", "operation_type", "D"));
-    String conflictingChangesSql = TestUtil.createChangeSql(conflictingChanges, schema);
+      // Prepare snapshot that will affect the 2024 partition (which has conflicts)
+      List<Map<String, Object>> conflictingSnapshot =
+          Arrays.asList(Map.of("id", 2L, "year", 2024, "value", "updated_2024_value"));
+      String conflictingSnapshotSql = TestUtil.createSelectSql(conflictingSnapshot, schema);
 
-    // Attempting to apply changes to the 2024 partition using the old table state with default
-    // isolation
-    // should fail due to conflicting files
-    assertThatThrownBy(
-            () -> {
-              swiftLakeEngine
-                  .applyChangesAsSCD1(tableStateAfterInitialInsert)
-                  .tableFilterSql("year = 2024")
-                  .sourceSql(conflictingChangesSql)
-                  .keyColumns(Arrays.asList("id"))
-                  .operationTypeColumn("operation_type", "D")
-                  .processSourceTables(false)
-                  .execute();
-            })
-        .hasMessageContaining("Found conflicting files");
+      // Attempting to apply snapshot to the 2024 partition using the old table state with default
+      // isolation should fail due to conflicting files
+      assertThatThrownBy(
+              () -> {
+                swiftLakeEngine
+                    .applySnapshotAsSCD1(tableStateAfterInitialInsert)
+                    .tableFilterSql("year = 2024")
+                    .sourceSql(conflictingSnapshotSql)
+                    .keyColumns(Arrays.asList("id"))
+                    .processSourceTables(false)
+                    .execute();
+              })
+          .hasMessageContaining("Found conflicting files");
 
-    // Use SNAPSHOT isolation with the table at first snapshot state
-    swiftLakeEngine
-        .applyChangesAsSCD1(tableStateAfterInitialInsert)
-        .tableFilterSql("year = 2024")
-        .sourceSql(conflictingChangesSql)
-        .keyColumns(Arrays.asList("id"))
-        .operationTypeColumn("operation_type", "D")
-        .isolationLevel(IsolationLevel.SNAPSHOT)
-        .processSourceTables(false)
-        .execute();
+      // Use SNAPSHOT isolation with the table at first snapshot state
+      swiftLakeEngine
+          .applySnapshotAsSCD1(tableStateAfterInitialInsert)
+          .tableFilterSql("year = 2024")
+          .sourceSql(conflictingSnapshotSql)
+          .keyColumns(Arrays.asList("id"))
+          .isolationLevel(IsolationLevel.SNAPSHOT)
+          .processSourceTables(false)
+          .execute();
+
+    } else {
+      List<Map<String, Object>> initialChanges =
+          Arrays.asList(
+              Map.of("id", 1L, "year", 2023, "value", "updated_2023_value", "operation_type", "U"),
+              Map.of("id", 4L, "year", 2025, "value", "new_2025_value", "operation_type", "I"));
+      String initialChangesSql = TestUtil.createChangeSql(initialChanges, schema);
+
+      // Attempt to apply changes with default isolation level should succeed
+      // since we're not targeting the same partition that has been modified
+      swiftLakeEngine
+          .applyChangesAsSCD1(tableName)
+          .tableFilterSql("id IS NOT NULL")
+          .sourceSql(initialChangesSql)
+          .keyColumns(Arrays.asList("id"))
+          .operationTypeColumn("operation_type", "D")
+          .processSourceTables(false)
+          .execute();
+
+      // Prepare changes that will affect the 2024 partition (which has conflicts)
+      List<Map<String, Object>> conflictingChanges =
+          Arrays.asList(
+              Map.of("id", 2L, "year", 2024, "value", "updated_2024_value", "operation_type", "U"),
+              Map.of("id", 3L, "year", 2024, "value", "deleted_value", "operation_type", "D"));
+      String conflictingChangesSql = TestUtil.createChangeSql(conflictingChanges, schema);
+
+      // Attempting to apply changes to the 2024 partition using the old table state with default
+      // isolation should fail due to conflicting files
+      assertThatThrownBy(
+              () -> {
+                swiftLakeEngine
+                    .applyChangesAsSCD1(tableStateAfterInitialInsert)
+                    .tableFilterSql("year = 2024")
+                    .sourceSql(conflictingChangesSql)
+                    .keyColumns(Arrays.asList("id"))
+                    .operationTypeColumn("operation_type", "D")
+                    .processSourceTables(false)
+                    .execute();
+              })
+          .hasMessageContaining("Found conflicting files");
+
+      // Use SNAPSHOT isolation with the table at first snapshot state
+      swiftLakeEngine
+          .applyChangesAsSCD1(tableStateAfterInitialInsert)
+          .tableFilterSql("year = 2024")
+          .sourceSql(conflictingChangesSql)
+          .keyColumns(Arrays.asList("id"))
+          .operationTypeColumn("operation_type", "D")
+          .isolationLevel(IsolationLevel.SNAPSHOT)
+          .processSourceTables(false)
+          .execute();
+    }
 
     // Refresh and verify the operation succeeded with a new snapshot
     table.refresh();
     assertThat(table.currentSnapshot().snapshotId())
         .isNotEqualTo(tableStateAfterSecondInsert.currentSnapshot().snapshotId());
 
-    List<Map<String, Object>> moreChanges =
-        Arrays.asList(
-            Map.of(
-                "id",
-                2L,
-                "year",
-                2024,
-                "value",
-                "updated_again_2024_value",
-                "operation_type",
-                "U"));
-    String moreChangesSql = TestUtil.createChangeSql(moreChanges, schema);
+    if (isSnapshotMode) {
+      List<Map<String, Object>> moreChanges =
+          Arrays.asList(Map.of("id", 2L, "year", 2024, "value", "updated_again_2024_value"));
+      String moreChangesSnapshotSql = TestUtil.createSelectSql(moreChanges, schema);
 
-    // Attempting with SNAPSHOT isolation on outdated state should also fail
-    assertThatThrownBy(
-            () -> {
-              swiftLakeEngine
-                  .applyChangesAsSCD1(tableStateAfterSecondInsert)
-                  .tableFilterSql("year = 2024")
-                  .sourceSql(moreChangesSql)
-                  .keyColumns(Arrays.asList("id"))
-                  .operationTypeColumn("operation_type", "D")
-                  .isolationLevel(IsolationLevel.SNAPSHOT)
-                  .processSourceTables(false)
-                  .execute();
-            })
-        .hasMessageContaining("Missing required files to delete");
+      // Attempting with SNAPSHOT isolation on outdated state should also fail
+      assertThatThrownBy(
+              () -> {
+                swiftLakeEngine
+                    .applySnapshotAsSCD1(tableStateAfterSecondInsert)
+                    .tableFilterSql("year = 2024")
+                    .sourceSql(moreChangesSnapshotSql)
+                    .keyColumns(Arrays.asList("id"))
+                    .isolationLevel(IsolationLevel.SNAPSHOT)
+                    .processSourceTables(false)
+                    .execute();
+              })
+          .hasMessageContaining("Missing required files to delete");
 
-    // Attempting with SERIALIZABLE isolation on outdated state should also fail
-    assertThatThrownBy(
-            () -> {
-              swiftLakeEngine
-                  .applyChangesAsSCD1(tableStateAfterSecondInsertCopy)
-                  .tableFilterSql("year = 2024")
-                  .sourceSql(moreChangesSql)
-                  .keyColumns(Arrays.asList("id"))
-                  .operationTypeColumn("operation_type", "D")
-                  .isolationLevel(IsolationLevel.SERIALIZABLE)
-                  .processSourceTables(false)
-                  .execute();
-            })
-        .hasMessageContaining("Found conflicting files");
+      // Attempting with SERIALIZABLE isolation on outdated state should also fail
+      assertThatThrownBy(
+              () -> {
+                swiftLakeEngine
+                    .applySnapshotAsSCD1(tableStateAfterSecondInsertCopy)
+                    .tableFilterSql("year = 2024")
+                    .sourceSql(moreChangesSnapshotSql)
+                    .keyColumns(Arrays.asList("id"))
+                    .isolationLevel(IsolationLevel.SERIALIZABLE)
+                    .processSourceTables(false)
+                    .execute();
+              })
+          .hasMessageContaining("Found conflicting files");
 
-    // Use SNAPSHOT isolation with current table state
-    swiftLakeEngine
-        .applyChangesAsSCD1(tableName)
-        .tableFilterSql("year = 2024")
-        .sourceSql(moreChangesSql)
-        .keyColumns(Arrays.asList("id"))
-        .operationTypeColumn("operation_type", "D")
-        .isolationLevel(IsolationLevel.SNAPSHOT)
-        .processSourceTables(false)
-        .execute();
+      // Use SNAPSHOT isolation with current table state
+      swiftLakeEngine
+          .applySnapshotAsSCD1(tableName)
+          .tableFilterSql("year = 2024")
+          .sourceSql(moreChangesSnapshotSql)
+          .keyColumns(Arrays.asList("id"))
+          .isolationLevel(IsolationLevel.SNAPSHOT)
+          .processSourceTables(false)
+          .execute();
+    } else {
+      List<Map<String, Object>> moreChanges =
+          Arrays.asList(
+              Map.of(
+                  "id",
+                  2L,
+                  "year",
+                  2024,
+                  "value",
+                  "updated_again_2024_value",
+                  "operation_type",
+                  "U"));
+      String moreChangesSql = TestUtil.createChangeSql(moreChanges, schema);
+
+      // Attempting with SNAPSHOT isolation on outdated state should also fail
+      assertThatThrownBy(
+              () -> {
+                swiftLakeEngine
+                    .applyChangesAsSCD1(tableStateAfterSecondInsert)
+                    .tableFilterSql("year = 2024")
+                    .sourceSql(moreChangesSql)
+                    .keyColumns(Arrays.asList("id"))
+                    .operationTypeColumn("operation_type", "D")
+                    .isolationLevel(IsolationLevel.SNAPSHOT)
+                    .processSourceTables(false)
+                    .execute();
+              })
+          .hasMessageContaining("Missing required files to delete");
+
+      // Attempting with SERIALIZABLE isolation on outdated state should also fail
+      assertThatThrownBy(
+              () -> {
+                swiftLakeEngine
+                    .applyChangesAsSCD1(tableStateAfterSecondInsertCopy)
+                    .tableFilterSql("year = 2024")
+                    .sourceSql(moreChangesSql)
+                    .keyColumns(Arrays.asList("id"))
+                    .operationTypeColumn("operation_type", "D")
+                    .isolationLevel(IsolationLevel.SERIALIZABLE)
+                    .processSourceTables(false)
+                    .execute();
+              })
+          .hasMessageContaining("Found conflicting files");
+
+      // Use SNAPSHOT isolation with current table state
+      swiftLakeEngine
+          .applyChangesAsSCD1(tableName)
+          .tableFilterSql("year = 2024")
+          .sourceSql(moreChangesSql)
+          .keyColumns(Arrays.asList("id"))
+          .operationTypeColumn("operation_type", "D")
+          .isolationLevel(IsolationLevel.SNAPSHOT)
+          .processSourceTables(false)
+          .execute();
+    }
 
     // Verify we have latest data
     table.refresh();
@@ -1308,23 +1655,46 @@ public class SCD1MergeAdvancedIntegrationTest {
             });
 
     // Use SERIALIZABLE isolation with current table state for final changes
-    List<Map<String, Object>> serializableChanges =
-        Arrays.asList(
-            Map.of(
-                "id", 7L, "year", 2024, "value", "serializable_2024_value", "operation_type", "I"),
-            Map.of("id", 2L, "year", 2024, "value", "final_update_value", "operation_type", "U"));
-    String serializableChangesSql = TestUtil.createChangeSql(serializableChanges, schema);
+    if (isSnapshotMode) {
+      List<Map<String, Object>> serializableChanges =
+          Arrays.asList(
+              Map.of("id", 7L, "year", 2024, "value", "serializable_2024_value"),
+              Map.of("id", 2L, "year", 2024, "value", "final_update_value"));
+      String serializableChangesSnapshotSql = TestUtil.createSelectSql(serializableChanges, schema);
 
-    swiftLakeEngine
-        .applyChangesAsSCD1(tableName)
-        .tableFilterSql("year = 2024")
-        .sourceSql(serializableChangesSql)
-        .keyColumns(Arrays.asList("id"))
-        .operationTypeColumn("operation_type", "D")
-        .isolationLevel(IsolationLevel.SERIALIZABLE)
-        .processSourceTables(false)
-        .execute();
+      swiftLakeEngine
+          .applySnapshotAsSCD1(tableName)
+          .tableFilterSql("year = 2024")
+          .sourceSql(serializableChangesSnapshotSql)
+          .keyColumns(Arrays.asList("id"))
+          .isolationLevel(IsolationLevel.SERIALIZABLE)
+          .processSourceTables(false)
+          .execute();
+    } else {
+      List<Map<String, Object>> serializableChanges =
+          Arrays.asList(
+              Map.of(
+                  "id",
+                  7L,
+                  "year",
+                  2024,
+                  "value",
+                  "serializable_2024_value",
+                  "operation_type",
+                  "I"),
+              Map.of("id", 2L, "year", 2024, "value", "final_update_value", "operation_type", "U"));
+      String serializableChangesSql = TestUtil.createChangeSql(serializableChanges, schema);
 
+      swiftLakeEngine
+          .applyChangesAsSCD1(tableName)
+          .tableFilterSql("year = 2024")
+          .sourceSql(serializableChangesSql)
+          .keyColumns(Arrays.asList("id"))
+          .operationTypeColumn("operation_type", "D")
+          .isolationLevel(IsolationLevel.SERIALIZABLE)
+          .processSourceTables(false)
+          .execute();
+    }
     // The operation should create a new snapshot
     table.refresh();
     assertThat(table.currentSnapshot().snapshotId()).isNotEqualTo(updatedSnapshotId);
@@ -1364,8 +1734,9 @@ public class SCD1MergeAdvancedIntegrationTest {
     TestUtil.dropIcebergTable(swiftLakeEngine, tableName);
   }
 
-  @Test
-  void testSCD1SnapshotMetadata() {
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void testSCD1SnapshotMetadata(boolean isSnapshotMode) {
     Schema schema =
         new Schema(
             Types.NestedField.required(1, "id", Types.LongType.get()),
@@ -1391,31 +1762,48 @@ public class SCD1MergeAdvancedIntegrationTest {
         .processSourceTables(false)
         .execute();
 
-    // Prepare SCD1 changes for update and insert with snapshot metadata
-    List<Map<String, Object>> changes =
-        Arrays.asList(
-            Map.of("id", 1L, "value", "updated-value-1", "operation_type", "U"),
-            Map.of("id", 3L, "value", "to-be-deleted", "operation_type", "D"),
-            Map.of("id", 4L, "value", "new-value-4", "operation_type", "I"));
-
-    String changesSql = TestUtil.createChangeSql(changes, schema);
-
-    // Apply SCD1 changes with snapshot metadata
+    // Apply SCD1 merge with snapshot metadata
     Map<String, String> metadata = new HashMap<>();
     metadata.put("user", "scd1-user");
     metadata.put("source", "scd1-test-system");
     metadata.put("timestamp", LocalDateTime.now().toString());
 
-    swiftLakeEngine
-        .applyChangesAsSCD1(tableName)
-        .tableFilterSql("id IS NOT NULL")
-        .sourceSql(changesSql)
-        .keyColumns(Arrays.asList("id"))
-        .operationTypeColumn("operation_type", "D")
-        .snapshotMetadata(metadata)
-        .processSourceTables(false)
-        .execute();
+    if (isSnapshotMode) {
+      // Prepare SCD1 changes for update and insert with snapshot metadata
+      List<Map<String, Object>> snapshotData =
+          Arrays.asList(
+              Map.of("id", 1L, "value", "updated-value-1"),
+              Map.of("id", 4L, "value", "new-value-4"),
+              Map.of("id", 2L, "value", "initial-value-2"));
 
+      String sourceSql = TestUtil.createSelectSql(snapshotData, schema);
+      swiftLakeEngine
+          .applySnapshotAsSCD1(tableName)
+          .tableFilterSql("id IS NOT NULL")
+          .sourceSql(sourceSql)
+          .keyColumns(Arrays.asList("id"))
+          .snapshotMetadata(metadata)
+          .processSourceTables(false)
+          .execute();
+    } else {
+      // Prepare SCD1 changes for update and insert with snapshot metadata
+      List<Map<String, Object>> changes =
+          Arrays.asList(
+              Map.of("id", 1L, "value", "updated-value-1", "operation_type", "U"),
+              Map.of("id", 3L, "value", "to-be-deleted", "operation_type", "D"),
+              Map.of("id", 4L, "value", "new-value-4", "operation_type", "I"));
+
+      String changesSql = TestUtil.createChangeSql(changes, schema);
+      swiftLakeEngine
+          .applyChangesAsSCD1(tableName)
+          .tableFilterSql("id IS NOT NULL")
+          .sourceSql(changesSql)
+          .keyColumns(Arrays.asList("id"))
+          .operationTypeColumn("operation_type", "D")
+          .snapshotMetadata(metadata)
+          .processSourceTables(false)
+          .execute();
+    }
     // Verify the snapshot contains our custom metadata
     table.refresh();
     Snapshot snapshot = table.currentSnapshot();
@@ -1447,31 +1835,51 @@ public class SCD1MergeAdvancedIntegrationTest {
               assertThat(row.get("value")).isEqualTo("new-value-4");
             });
 
-    // Apply another set of changes with different metadata
-    List<Map<String, Object>> changes2 =
-        Arrays.asList(
-            Map.of("id", 2L, "value", "updated-value-2", "operation_type", "U"),
-            Map.of("id", 5L, "value", "new-value-5", "operation_type", "I"));
-
-    String changesSql2 = TestUtil.createChangeSql(changes2, schema);
-
-    // Apply second SCD1 changes with different metadata
+    // Apply second SCD1 merge with different metadata
     Map<String, String> metadata2 = new HashMap<>();
     metadata2.put("user", "another-scd1-user");
     metadata2.put("transaction-id", UUID.randomUUID().toString());
     metadata2.put("operation-count", "2");
     metadata2.put("date", LocalDate.now().toString());
 
-    swiftLakeEngine
-        .applyChangesAsSCD1(tableName)
-        .tableFilterSql("id IS NOT NULL")
-        .sourceSql(changesSql2)
-        .keyColumns(Arrays.asList("id"))
-        .operationTypeColumn("operation_type", "D")
-        .snapshotMetadata(metadata2)
-        .processSourceTables(false)
-        .execute();
+    if (isSnapshotMode) {
+      // Apply another set of changes with different metadata
+      List<Map<String, Object>> snapshotData2 =
+          Arrays.asList(
+              Map.of("id", 1L, "value", "updated-value-1"),
+              Map.of("id", 4L, "value", "new-value-4"),
+              Map.of("id", 2L, "value", "updated-value-2"),
+              Map.of("id", 5L, "value", "new-value-5"));
 
+      String sourceSql2 = TestUtil.createSelectSql(snapshotData2, schema);
+
+      swiftLakeEngine
+          .applySnapshotAsSCD1(tableName)
+          .tableFilterSql("id IS NOT NULL")
+          .sourceSql(sourceSql2)
+          .keyColumns(Arrays.asList("id"))
+          .snapshotMetadata(metadata2)
+          .processSourceTables(false)
+          .execute();
+    } else {
+      // Apply another set of changes with different metadata
+      List<Map<String, Object>> changes2 =
+          Arrays.asList(
+              Map.of("id", 2L, "value", "updated-value-2", "operation_type", "U"),
+              Map.of("id", 5L, "value", "new-value-5", "operation_type", "I"));
+
+      String changesSql2 = TestUtil.createChangeSql(changes2, schema);
+
+      swiftLakeEngine
+          .applyChangesAsSCD1(tableName)
+          .tableFilterSql("id IS NOT NULL")
+          .sourceSql(changesSql2)
+          .keyColumns(Arrays.asList("id"))
+          .operationTypeColumn("operation_type", "D")
+          .snapshotMetadata(metadata2)
+          .processSourceTables(false)
+          .execute();
+    }
     // Verify the new snapshot has the updated metadata
     table.refresh();
     Snapshot newSnapshot = table.currentSnapshot();

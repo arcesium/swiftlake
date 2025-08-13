@@ -18,9 +18,11 @@ package com.arcesium.swiftlake.commands;
 import com.arcesium.swiftlake.expressions.Expression;
 import com.arcesium.swiftlake.mybatis.SwiftLakeSqlSessionFactory;
 import java.util.List;
+import java.util.Map;
 
 /** Represents properties for SCD1 (Slowly Changing Dimension Type 1) merge operations. */
 public class SCD1MergeProperties {
+  private SCD1MergeMode mode;
   private Expression tableFilter;
   private String tableFilterSql;
   private List<String> tableFilterColumns;
@@ -31,9 +33,12 @@ public class SCD1MergeProperties {
   private SwiftLakeSqlSessionFactory sqlSessionFactory;
   private boolean executeSourceSqlOnceOnly;
   private List<String> keyColumns;
+  private List<String> valueColumns;
+  private Map<String, ValueColumnMetadata<?>> valueColumnMetadataMap;
   private List<String> columns;
   private String operationTypeColumn;
   private String deleteOperationValue;
+  private boolean skipEmptySource;
   private boolean skipDataSorting;
 
   // Internal
@@ -45,8 +50,18 @@ public class SCD1MergeProperties {
   private boolean appendOnly;
   private String compression;
   private String modifiedFileNamesFilePath;
+  private Map<String, Double> valueColumnMaxDeltaValues;
+  private Map<String, String> valueColumnNullReplacements;
 
   public SCD1MergeProperties() {}
+
+  public SCD1MergeMode getMode() {
+    return mode;
+  }
+
+  public void setMode(SCD1MergeMode mode) {
+    this.mode = mode;
+  }
 
   public Expression getTableFilter() {
     return tableFilter;
@@ -78,6 +93,23 @@ public class SCD1MergeProperties {
 
   public void setKeyColumns(List<String> keyColumns) {
     this.keyColumns = keyColumns;
+  }
+
+  public List<String> getValueColumns() {
+    return valueColumns;
+  }
+
+  public void setValueColumns(List<String> valueColumns) {
+    this.valueColumns = valueColumns;
+  }
+
+  public Map<String, ValueColumnMetadata<?>> getValueColumnMetadataMap() {
+    return valueColumnMetadataMap;
+  }
+
+  public void setValueColumnMetadataMap(
+      Map<String, ValueColumnMetadata<?>> valueColumnMetadataMap) {
+    this.valueColumnMetadataMap = valueColumnMetadataMap;
   }
 
   public List<String> getColumns() {
@@ -192,6 +224,14 @@ public class SCD1MergeProperties {
     this.executeSourceSqlOnceOnly = executeSourceSqlOnceOnly;
   }
 
+  public boolean isSkipEmptySource() {
+    return skipEmptySource;
+  }
+
+  public void setSkipEmptySource(boolean skipEmptySource) {
+    this.skipEmptySource = skipEmptySource;
+  }
+
   public boolean isSkipDataSorting() {
     return skipDataSorting;
   }
@@ -224,10 +264,28 @@ public class SCD1MergeProperties {
     this.processSourceTables = processSourceTables;
   }
 
+  public Map<String, Double> getValueColumnMaxDeltaValues() {
+    return valueColumnMaxDeltaValues;
+  }
+
+  public void setValueColumnMaxDeltaValues(Map<String, Double> valueColumnMaxDeltaValues) {
+    this.valueColumnMaxDeltaValues = valueColumnMaxDeltaValues;
+  }
+
+  public Map<String, String> getValueColumnNullReplacements() {
+    return valueColumnNullReplacements;
+  }
+
+  public void setValueColumnNullReplacements(Map<String, String> valueColumnNullReplacements) {
+    this.valueColumnNullReplacements = valueColumnNullReplacements;
+  }
+
   @Override
   public String toString() {
     return "MergeProperties{"
-        + "tableFilter="
+        + "mode="
+        + mode
+        + ", tableFilter="
         + tableFilter
         + ", tableFilterSql='"
         + tableFilterSql
@@ -248,6 +306,10 @@ public class SCD1MergeProperties {
         + executeSourceSqlOnceOnly
         + ", keyColumns="
         + keyColumns
+        + ", valueColumns="
+        + valueColumns
+        + ", valueColumnMetadataMap="
+        + valueColumnMetadataMap
         + ", columns="
         + columns
         + ", operationColumnName='"
@@ -256,6 +318,8 @@ public class SCD1MergeProperties {
         + ", deleteOperationValue='"
         + deleteOperationValue
         + '\''
+        + ", skipEmptySource="
+        + skipEmptySource
         + ", skipDataSorting="
         + skipDataSorting
         + ", boundaryCondition='"
