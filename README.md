@@ -83,14 +83,14 @@ Add this to your `pom.xml`:
 <dependency>
     <groupId>com.arcesium.swiftlake</groupId>
     <artifactId>swiftlake-core</artifactId>
-    <version>0.1.0</version>
+    <version>0.2.0</version>
 </dependency>
 ```
 
 #### Gradle
 Add this to your `build.gradle`:
 ```gradle
-implementation 'com.arcesium.swiftlake:swiftlake-core:0.1.0'
+implementation 'com.arcesium.swiftlake:swiftlake-core:0.2.0'
 ```
 
 ### Setup
@@ -203,13 +203,13 @@ To use SwiftLake with Amazon S3, you need to configure the S3 file system:
 <dependency>
     <groupId>com.arcesium.swiftlake</groupId>
     <artifactId>swiftlake-aws</artifactId>
-    <version>0.1.0</version>
+    <version>0.2.0</version>
 </dependency>
 ```
 
 ##### Gradle
 ```gradle
-implementation 'com.arcesium.swiftlake:swiftlake-aws:0.1.0'
+implementation 'com.arcesium.swiftlake:swiftlake-aws:0.2.0'
 ```
 
 2. Configure S3 in your SwiftLake setup:
@@ -435,9 +435,11 @@ swiftLakeEngine.deleteFrom(tableName)
 | `isolationLevel` | `serializable` | Specifies the Iceberg isolation level to use |
 | `branch` | `main` | Specifies the Iceberg branch to use |
 
-### SCD1Merge Operation
+### SCD1 Merge Operation
+The SCD1 (Slowly Changing Dimension Type 1) merge operation in SwiftLakeEngine allows you to update existing records, insert new ones, and delete records while maintaining only the current state of data without preserving history. This operation is ideal for dimensions where historical values are not needed.
 
-The SCD1Merge functionality in SwiftLakeEngine allows you to perform Slowly Changing Dimension Type 1 (SCD1) merges on Iceberg tables. This operation combines insert, update, and delete operations, enabling you to update existing records, insert new ones, and delete records based on matching conditions and an operation column in the source.
+#### Changes Mode
+In Changes Mode, the SCD1 merge operation processes incremental changes based on change events. It expects input data containing records with an Operation Column specifying the change type (INSERT/UPDATE, DELETE). The operation applies the specified changes to matching records based on key columns.
 
 ```java
 String sourceSql = "SELECT * FROM (VALUES (1, 'a', 'category1', DATE'2025-01-01', 'INSERT'), " +
@@ -452,7 +454,7 @@ swiftLakeEngine.applyChangesAsSCD1(tableName)
     .execute();
 ```
 
-#### Configuration Options
+##### Configuration Options
 
 | Name | Default | Description                                                                        |
 |------|---------|------------------------------------------------------------------------------------|
@@ -475,11 +477,53 @@ swiftLakeEngine.applyChangesAsSCD1(tableName)
 | `isolationLevel` | `serializable` | Specifies the Iceberg isolation level to use                                       |
 | `branch` | `main` | Specifies the Iceberg branch to use                                                |
 
-#### Best Practices
+##### Best Practices
 
 1. Always specify key columns to ensure accurate matching between source and target records.
 2. Use table filtering to optimize performance, especially for large tables.
 3. Consider using `executeSourceSqlOnceOnly` for complex or non-deterministic source queries.
+
+#### Snapshot Mode
+In Snapshot Mode, the SCD1 merge operation performs merge based on snapshot comparisons. This mode identifies differences by comparing a complete input snapshot with the existing data in the table, enabling efficient detection of inserts, updates, and deletes without requiring an operation column.
+
+```java
+String sourceSql = "SELECT * FROM (VALUES (1, 'a', 'category1', DATE'2025-01-01'), " +
+                   "(3, 'c', 'category3', DATE'2025-01-01')) " +
+                   "source(id, data, category, date)";
+
+swiftLakeEngine.applySnapshotAsSCD1(tableName)
+    .tableFilterSql("date = DATE'2025-01-01'")
+    .sourceSql(sourceSql)
+    .keyColumns(List.of("id", "category", "date"))
+    .execute();
+```
+
+##### Configuration Options
+
+| Name | Default | Description                                                                        |
+|------|---------|------------------------------------------------------------------------------------|
+| `tableFilterSql` | - | SQL predicate to retrieve the existing snapshot data from the table for comparison                          |
+| `tableFilter` | - | Alternative condition specification using Expressions APIs                         |
+| `sourceSql` | - | SELECT statement SQL query to retrieve input data for merge                        |
+| `sourceMybatisStatement` | - |               |
+| &nbsp;&nbsp;&nbsp;&nbsp;`id` | - | Identifier of the MyBatis SELECT statement to retrieve input data                  |
+| &nbsp;&nbsp;&nbsp;&nbsp;`parameter` | - | Parameters to replace in the MyBatis SQL query                                     |
+| `keyColumns` | - | Primary key columns used to match source and target records                        |
+| `valueColumns` | All non-key columns | List of columns to consider when detecting changes between source snapshot and target table                                                                                  |
+| `valueColumnsMetadata` | - | Map of column names to their value comparison metadata, including maximum allowed delta for numeric columns and null replacement values |
+| `columns` | All columns of the table | List of column names to include in the merge                                       |
+| `executeSourceSqlOnceOnly` | `false` | Set to true for partitioned tables with expensive or non-deterministic queries     |
+| `skipDataSorting` | `false` | When set to true, skips sorting data before insertion                              |
+| `sqlSessionFactory` | SwiftLake Engine-level SqlSessionFactory | Optional SqlSessionFactory for MyBatis integration                                 |
+| `processSourceTables` | SwiftLake Engine-level processTablesDefaultValue | Process tables present in the source SQL                                           |
+| `isolationLevel` | `serializable` | Specifies the Iceberg isolation level to use                                       |
+| `branch` | `main` | Specifies the Iceberg branch to use                                                |
+
+##### Best Practices
+
+1. Carefully define your tableFilter to ensure you're comparing the correct subset of existing data.
+2. Use `valueColumnsMetadata` to fine-tune change detection, especially for numeric columns where small variations might not be considered significant changes.
+3. Consider using `executeSourceSqlOnceOnly` for complex or expensive source queries to improve performance.
 
 ### SCD2 Merge Operation 
 

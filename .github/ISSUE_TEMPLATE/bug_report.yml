@@ -14,7 +14,8 @@ body:
       label: SwiftLake version
       description: What version of SwiftLake are you using?
       options:
-        - "0.1.0 (latest release)"
+        - "0.2.0 (latest release)"
+        - "0.1.0"
         - "main (development)"
         - "Other (please specify in description)"
     validations:
