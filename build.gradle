@@ -16,7 +16,7 @@ plugins {
 
 allprojects {
     group = 'com.arcesium.swiftlake'
-    version = '0.1.0'
+    version = '0.2.0'
     repositories {
         mavenCentral()
     }
@@ -72,7 +72,7 @@ subprojects {
 
                 pom {
                     name = 'SwiftLake'
-                    description = 'A lightweight Java library for cloud data lakes'
+                    description = 'SwiftLake: Simplifying lakehouse data operations with Iceberg and DuckDB'
                     url = 'https://github.com/arcesium/swiftlake'
 
                     licenses {
